@@ -7,3 +7,5 @@ README.md
 .git
 .DS_Store
 *.db
+.env
+.env*

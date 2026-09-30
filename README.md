@@ -84,7 +84,7 @@ Open http://localhost:3000. `prisma db seed` loads sample zones. To see a firewa
 
 #### 🐳 Docker Usage
 
-The project includes a Dockerfile and docker-compose.yml for containerized deployment.
+The project includes a Dockerfile and docker-compose.yml. The container keeps the SQLite file at `/app/data/dev.db`, creates the tables on startup, and does not load the sample seed. Create a chart in the app and import a CSV.
 
 Build and run locally:
 ```bash

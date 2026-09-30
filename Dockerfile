@@ -36,13 +36,15 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# We need Prisma client and scripts in runner
+# Use the client generated during the build, not a second install.
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
-RUN npm install prisma@^6.0.0 @prisma/client@^6.0.0 tsx
-RUN chown -R nextjs:nodejs /app/node_modules
 
-# Create a volume directory for sqlite
+# SQLite file lives on the volume, not beside the schema.
 RUN mkdir -p /app/data
 
 EXPOSE 3000
