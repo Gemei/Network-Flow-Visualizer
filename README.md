@@ -17,8 +17,6 @@ An interactive web app for reading a firewall rulebase and seeing which zones ca
 
 Import a Palo Alto security-rulebase CSV and the app draws one box per zone. Allow traffic is a solid green line. Deny, drop, and reset traffic is a dashed red line. Each chart keeps its own zones, rules, and layout.
 
-![Main UI](./public/screenshots/main_ui.png)
-
 ## Using the graph
 
 **Import.** In the sidebar, choose **Import Palo Alto CSV**. The import replaces the zones and rules on the chart you have open. A new chart starts empty, so import again for that chart. Disabled rules (names that start with `[Disabled]`) are stored but not drawn.
