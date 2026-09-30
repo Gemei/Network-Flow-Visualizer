@@ -1,7 +1,15 @@
+import { useRef } from 'react'
 import { Handle, Position, NodeResizer } from '@xyflow/react'
 import { useTheme } from 'next-themes'
 
 export function ZoneNode({ data, selected }: { data: any; selected?: boolean }) {
+  const resizing = useRef(false)
+  const minWidth = useRef(data.minWidth || 180)
+  const minHeight = useRef(data.minHeight || 80)
+  if (!resizing.current) {
+    minWidth.current = data.minWidth || 180
+    minHeight.current = data.minHeight || 80
+  }
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   
@@ -20,13 +28,14 @@ export function ZoneNode({ data, selected }: { data: any; selected?: boolean }) 
       }}
       title={data.description || 'Zone'}
     >
-      {/* Resize handle - only visible when selected */}
-      <NodeResizer 
-        minWidth={300} 
-        minHeight={100}
+      <NodeResizer
+        minWidth={minWidth.current}
+        minHeight={minHeight.current}
         isVisible={selected}
         lineClassName="!border-blue-400"
         handleClassName="!w-3 !h-3 !bg-blue-500 !border-blue-600 !rounded-sm"
+        onResizeStart={() => { resizing.current = true }}
+        onResizeEnd={() => { resizing.current = false }}
       />
       <div 
         className="absolute top-2 left-4 text-sm font-bold tracking-wider uppercase px-2 py-0.5 rounded"
@@ -34,11 +43,25 @@ export function ZoneNode({ data, selected }: { data: any; selected?: boolean }) 
       >
         {data.label}
       </div>
-      {/* Left/Right handles only, fully invisible and non-interactive */}
-      <Handle id="left" type="source" position={Position.Left} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
-      <Handle id="right" type="source" position={Position.Right} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
-      <Handle id="left-target" type="target" position={Position.Left} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
-      <Handle id="right-target" type="target" position={Position.Right} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
+      {(['left', 'right', 'top', 'bottom'] as const).map(side => {
+        const position = { left: Position.Left, right: Position.Right, top: Position.Top, bottom: Position.Bottom }[side]
+        return (
+          <Handle
+            key={side}
+            id={side}
+            type="source"
+            position={position}
+            style={{
+              width: 12,
+              height: 12,
+              background: '#2563eb',
+              border: '2px solid white',
+              opacity: data.showAttachments ? 1 : 0,
+              pointerEvents: 'none',
+            }}
+          />
+        )
+      })}
     </div>
   )
 }

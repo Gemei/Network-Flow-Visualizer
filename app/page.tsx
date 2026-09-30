@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { ReactFlow, Controls, Background, ReactFlowProvider, useNodesState, useEdgesState, Node, Edge } from '@xyflow/react'
+import { ReactFlow, Controls, Background, ReactFlowProvider, useNodesState, useEdgesState, useUpdateNodeInternals, useReactFlow, ConnectionMode, Node, Edge } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import { ZoneNode } from '@/components/nodes/ZoneNode'
@@ -12,7 +12,9 @@ import { Sidebar } from '@/components/Sidebar'
 import { PropertiesPanel } from '@/components/PropertiesPanel'
 import { ChartTabs, Chart } from '@/components/ChartTabs'
 import { DataTablePopup } from '@/components/DataTablePopup'
-import { generateGraph } from '@/lib/graph-logic'
+import { ExportPngDialog } from '@/components/ExportPngDialog'
+import { GraphMenu } from '@/components/GraphMenu'
+import { generateGraph, resizeFlowNode } from '@/lib/graph-logic'
 import { detectRuleConflicts } from '@/lib/rule-conflicts'
 
 const nodeTypes = {
@@ -48,63 +50,54 @@ function getAbsoluteCenter(nodeId: string, nodeMap: Map<string, Node>): { x: num
   return { x, y }
 }
 
-// Recompute edge handles based on current node positions (left/right only)
-// When nodes are vertically aligned (same parent zone), route left→left to avoid zone overlap
+function facingSide(from: { x: number; y: number }, to: { x: number; y: number }): 'left' | 'right' | 'top' | 'bottom' {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'right' : 'left'
+  return dy >= 0 ? 'bottom' : 'top'
+}
+
 function recomputeEdgeHandles(edges: Edge[], nodes: Node[]): Edge[] {
   const nodeMap = new Map<string, Node>()
   nodes.forEach(n => nodeMap.set(n.id, n))
-  
-  // Helper: find the top-level zone for a node
-  function getZoneId(nodeId: string): string | null {
-    let current = nodeMap.get(nodeId)
-    while (current) {
-      if (current.type === 'ZoneNode') return current.id
-      if (current.parentId) {
-        current = nodeMap.get(current.parentId)
-      } else {
-        return null
-      }
-    }
-    return null
-  }
-  
+
   return edges.map(edge => {
     const srcCenter = getAbsoluteCenter(edge.source, nodeMap)
     const tgtCenter = getAbsoluteCenter(edge.target, nodeMap)
-    
-    const srcZone = getZoneId(edge.source)
-    const tgtZone = getZoneId(edge.target)
-    
-    // Check if nodes are in the same zone (vertically aligned)
-    const sameZone = srcZone && tgtZone && srcZone === tgtZone
-    // Or if their X centers are very close (within 100px) → treat as vertically aligned
-    const verticallyAligned = Math.abs(srcCenter.x - tgtCenter.x) < 100
-    
-    if (sameZone || verticallyAligned) {
-      // Route both from left side to avoid crossing through the zone
-      return { ...edge, sourceHandle: 'left', targetHandle: 'left-target' }
-    }
-    
-    if (tgtCenter.x >= srcCenter.x) {
-      return { ...edge, sourceHandle: 'right', targetHandle: 'left-target' }
-    } else {
-      return { ...edge, sourceHandle: 'left', targetHandle: 'right-target' }
-    }
+    if (edge.data?.manualHandles && edge.sourceHandle && edge.targetHandle) return edge
+    const sourceSide = facingSide(srcCenter, tgtCenter)
+    const targetSide = facingSide(tgtCenter, srcCenter)
+    return { ...edge, sourceHandle: sourceSide, targetHandle: targetSide }
   })
 }
 
-export default function Home() {
+export default function Page() {
+  return (
+    <ReactFlowProvider>
+      <Home />
+    </ReactFlowProvider>
+  )
+}
+
+function Home() {
+  const { fitView } = useReactFlow()
   const [topologyData, setTopologyData] = useState<any>(null)
   
   // Chart states
   const [charts, setCharts] = useState<Chart[]>([])
   const [activeChartId, setActiveChartId] = useState<string | null>(null)
+  const [chartsReady, setChartsReady] = useState(false)
   
   // View states (now bound to the active chart conceptually)
   const [hiddenNodes, setHiddenNodes] = useState<Record<string, boolean>>({})
   const [hiddenRules, setHiddenRules] = useState<Record<string, boolean>>({})
   const [showAutoFlow, setShowAutoFlow] = useState(false)
+  const [showAllow, setShowAllow] = useState(true)
+  const [showDeny, setShowDeny] = useState(true)
+  const [chipLines, setChipLines] = useState(false)
+  const [layoutEpoch, setLayoutEpoch] = useState(0)
   const [isDataViewOpen, setIsDataViewOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
   
   const [activeRules, setActiveRules] = useState<any[]>([])
   const [selectedItem, setSelectedItem] = useState<any>(null)
@@ -117,12 +110,16 @@ export default function Home() {
   // Store node positions and sizes so layout doesn't jump
   const nodePositionsRef = useRef<Record<string, { x: number; y: number }>>({})
   const nodeSizesRef = useRef<Record<string, { width: number; height: number }>>({})
+  const edgeHandlesRef = useRef<Record<string, { sourceHandle: string; targetHandle: string }>>({})
+  const resetLayoutPending = useRef(false)
   // Store custom drag curves for edges
   const edgeControlsRef = useRef<Record<string, { x: number; y: number }>>({})
 
-  const refreshTopology = async () => {
+  const refreshTopology = async (chartId?: string) => {
+    const id = chartId || activeChartId
+    if (!id) return
     try {
-      const res = await fetch('/api/topology')
+      const res = await fetch(`/api/topology?chartId=${encodeURIComponent(id)}`)
       const data = await res.json()
       if (data.zones && data.rules) {
         setTopologyData(data)
@@ -154,15 +151,21 @@ export default function Home() {
           applyChartViewState(data[0])
         }
       }
+      setChartsReady(true)
     } catch (e) {
       console.error(e)
+      setChartsReady(true)
     }
   }
 
   useEffect(() => {
-    refreshTopology()
     loadCharts()
   }, [])
+
+  useEffect(() => {
+    if (!chartsReady || !activeChartId) return
+    refreshTopology(activeChartId)
+  }, [chartsReady, activeChartId])
 
   // Autosave view state when relevant local states change
   useEffect(() => {
@@ -171,7 +174,7 @@ export default function Home() {
       saveActiveChartState()
     }, 1000)
     return () => clearTimeout(timer)
-  }, [hiddenNodes, hiddenRules, showAutoFlow, activeChartId])
+  }, [hiddenNodes, hiddenRules, showAutoFlow, showAllow, showDeny, chipLines, activeChartId])
 
   const applyChartViewState = (chart: Chart) => {
     if (!chart.viewState) {
@@ -179,6 +182,8 @@ export default function Home() {
       setShowAutoFlow(false)
       nodePositionsRef.current = {}
       nodeSizesRef.current = {}
+      edgeControlsRef.current = {}
+      edgeHandlesRef.current = {}
       return
     }
     try {
@@ -186,9 +191,13 @@ export default function Home() {
       setHiddenNodes(state.hiddenNodes || {})
       setHiddenRules(state.hiddenRules || {})
       setShowAutoFlow(state.showAutoFlow || false)
+      if (typeof state.showAllow === 'boolean') setShowAllow(state.showAllow)
+      if (typeof state.showDeny === 'boolean') setShowDeny(state.showDeny)
+      if (typeof state.chipLines === 'boolean') setChipLines(state.chipLines)
       nodePositionsRef.current = state.nodePositions || state.zonePositions || {}
       nodeSizesRef.current = state.nodeSizes || state.zoneSizes || {}
       edgeControlsRef.current = state.edgeControls || {}
+      edgeHandlesRef.current = state.edgeHandles || {}
     } catch (e) {
       console.error('Failed to parse chart state', e)
     }
@@ -202,7 +211,11 @@ export default function Home() {
       showAutoFlow,
       nodePositions: nodePositionsRef.current,
       nodeSizes: nodeSizesRef.current,
-      edgeControls: edgeControlsRef.current
+      edgeControls: edgeControlsRef.current,
+      edgeHandles: edgeHandlesRef.current,
+      showAllow,
+      showDeny,
+      chipLines,
     })
     
     fetch(`/api/charts/${activeChartId}`, {
@@ -215,12 +228,58 @@ export default function Home() {
     setCharts(prev => prev.map(c => c.id === activeChartId ? { ...c, viewState } : c))
   }
 
+  const resetGraphLayout = () => {
+    nodePositionsRef.current = {}
+    nodeSizesRef.current = {}
+    edgeControlsRef.current = {}
+    edgeHandlesRef.current = {}
+    resetLayoutPending.current = true
+    setLayoutEpoch(epoch => epoch + 1)
+    saveActiveChartState()
+  }
+
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
+  const updateNodeInternals = useUpdateNodeInternals()
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+
+  useEffect(() => {
+    const zoneOf = (id: string) => {
+      if (id.startsWith('section-networks-') || id.startsWith('section-hosts-')) {
+        return id.replace(/^section-(networks|hosts)-/, '')
+      }
+      let current = nodes.find(node => node.id === id)
+      while (current?.parentId) {
+        const parent = nodes.find(node => node.id === current?.parentId)
+        if (!parent) break
+        if (parent.type === 'ZoneNode') return parent.id
+        current = parent
+      }
+      return current?.type === 'ZoneNode' ? current.id : null
+    }
+    const active = new Set<string>()
+    edges.forEach(edge => {
+      if (!edge.selected) return
+      const sourceZone = zoneOf(edge.source)
+      const targetZone = zoneOf(edge.target)
+      if (sourceZone) active.add(sourceZone)
+      if (targetZone) active.add(targetZone)
+    })
+    setNodes(current => {
+      let changed = false
+      const next = current.map(node => {
+        if (node.type !== 'ZoneNode') return node
+        const showAttachments = active.has(node.id)
+        if (!!node.data?.showAttachments === showAttachments) return node
+        changed = true
+        return { ...node, data: { ...node.data, showAttachments } }
+      })
+      return changed ? next : current
+    })
+  }, [edges, nodes, setNodes])
 
   // Generate graph when topology data changes
   useEffect(() => {
-    if (!topologyData) return
+    if (!topologyData || !chartsReady) return
     const { nodes: initNodes, edges: initEdges } = generateGraph(
       { zones: topologyData.zones, rules: activeRules },
       hiddenNodes,
@@ -228,7 +287,8 @@ export default function Home() {
       showAutoFlow,
       ruleConflicts,
       nodePositionsRef.current,
-      nodeSizesRef.current
+      nodeSizesRef.current,
+      chipLines
     )
     // Save node positions (for zones) and sizes (for all) for next time
     initNodes.forEach(n => {
@@ -244,7 +304,11 @@ export default function Home() {
     })
 
     // Compute edge handles based on node positions
-    const edgesWithHandles = recomputeEdgeHandles(initEdges, initNodes)
+    const edgesWithHandles = recomputeEdgeHandles(initEdges, initNodes).map(edge => {
+      const saved = edgeHandlesRef.current[edge.id]
+      if (!saved) return edge
+      return { ...edge, sourceHandle: saved.sourceHandle, targetHandle: saved.targetHandle, data: { ...edge.data, manualHandles: true } }
+    })
     
     // Inject saved control curves and the update callback
     const edgesWithControls = edgesWithHandles.map(edge => {
@@ -255,14 +319,44 @@ export default function Home() {
           ...edge.data,
           controlX: savedControl?.x,
           controlY: savedControl?.y,
-          onControlChange: handleEdgeControlChange
+          onControlChange: handleEdgeControlChange,
+          onAttachmentChange: handleAttachmentChange,
+          showArrow: !chipLines,
         }
       }
     })
     
+    const visibleEdges = edgesWithControls.filter(edge => {
+      if (edge.data?.isAuto) return true
+      if (edge.data?.action === 'BLOCK') return showDeny
+      return showAllow
+    })
     setNodes(initNodes)
-    setEdges(edgesWithControls)
-  }, [topologyData, hiddenNodes, hiddenRules, showAutoFlow, activeRules, setNodes, setEdges])
+    setEdges(visibleEdges)
+    requestAnimationFrame(() => {
+      initNodes.forEach(node => updateNodeInternals(node.id))
+      if (resetLayoutPending.current) {
+        resetLayoutPending.current = false
+        fitView({ padding: 0.2, duration: 300 })
+      }
+    })
+  }, [topologyData, chartsReady, hiddenNodes, hiddenRules, showAutoFlow, activeRules, showAllow, showDeny, chipLines, layoutEpoch, setNodes, setEdges, updateNodeInternals, fitView])
+
+  const handleAttachmentChange = useCallback((id: string, end: 'source' | 'target', side: string) => {
+    setEdges(currentEdges => currentEdges.map(edge => {
+      if (edge.id !== id) return edge
+      const sourceHandle = end === 'source' ? side : (edge.sourceHandle || 'right')
+      const targetHandle = end === 'target' ? side : (edge.targetHandle || 'left')
+      edgeHandlesRef.current[id] = { sourceHandle, targetHandle }
+      return {
+        ...edge,
+        sourceHandle,
+        targetHandle,
+        data: { ...edge.data, manualHandles: true },
+      }
+    }))
+    saveActiveChartState()
+  }, [setEdges, activeChartId])
 
   // Handle manual edge dragging
   const handleEdgeControlChange = useCallback((id: string, x: number, y: number) => {
@@ -279,7 +373,23 @@ export default function Home() {
 
   // Track drag and resize changes for zone nodes, recompute edge handles
   const handleNodesChange = useCallback((changes: any) => {
-    onNodesChange(changes)
+    onNodesChange(changes.filter((change: any) => change.type !== 'dimensions' || change.resizing))
+    const zoneResizes = changes.filter((change: any) => change.type === 'dimensions' && change.resizing && change.dimensions)
+    if (zoneResizes.length > 0) {
+      setNodes(current => {
+        let next = current
+        for (const change of zoneResizes) {
+          next = resizeFlowNode(next, change.id, change.dimensions.width, change.dimensions.height)
+          next.forEach(node => {
+            if (node.type === 'ZoneNode' && node.width && node.height) {
+              nodePositionsRef.current[node.id] = { ...node.position }
+              nodeSizesRef.current[node.id] = { width: node.width, height: node.height }
+            }
+          })
+        }
+        return next
+      })
+    }
     
     let needsEdgeUpdate = false
     let autoSaveTrigger = false
@@ -293,15 +403,8 @@ export default function Home() {
           if (!change.dragging) autoSaveTrigger = true // drag ended
         }
       }
-      if (change.type === 'dimensions' && change.dimensions) {
-        const node = nodes.find(n => n.id === change.id)
-        if (node) {
-          nodeSizesRef.current[change.id] = {
-            width: change.dimensions.width,
-            height: change.dimensions.height,
-          }
-          autoSaveTrigger = true
-        }
+      if (change.type === 'dimensions' && change.dimensions && !change.resizing) {
+        autoSaveTrigger = true
       }
     })
     
@@ -316,7 +419,11 @@ export default function Home() {
           }
           return n
         })
-        return recomputeEdgeHandles(currentEdges, updatedNodes)
+        return recomputeEdgeHandles(currentEdges, updatedNodes).map(edge => {
+          const saved = edgeHandlesRef.current[edge.id]
+          if (!saved) return edge
+          return { ...edge, sourceHandle: saved.sourceHandle, targetHandle: saved.targetHandle, data: { ...edge.data, manualHandles: true } }
+        })
       })
     }
 
@@ -337,7 +444,7 @@ export default function Home() {
         await fetch('/api/rules', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(formData)
+          body: JSON.stringify({ ...formData, chartId: activeChartId })
         })
         setSelectedItem(null)
         await refreshTopology()
@@ -413,7 +520,7 @@ export default function Home() {
       await fetch('/api/zones', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'New Zone' })
+        body: JSON.stringify({ name: 'New Zone', chartId: activeChartId })
       })
       await refreshTopology()
     } else if (type === 'RuleEdge') {
@@ -515,6 +622,15 @@ export default function Home() {
         onAddGlobal={handleAddGlobal}
         onSelectItem={handleSidebarSelect}
         ruleConflicts={ruleConflicts}
+        onImported={refreshTopology}
+        showAllow={showAllow}
+        setShowAllow={setShowAllow}
+        showDeny={showDeny}
+        setShowDeny={setShowDeny}
+        chipLines={chipLines}
+        setChipLines={setChipLines}
+        onResetLayout={resetGraphLayout}
+        chartId={activeChartId}
       />
       
       <div className="flex-1 h-full flex flex-col">
@@ -528,7 +644,6 @@ export default function Home() {
           onOpenDataView={() => setIsDataViewOpen(true)}
         />
         <div className="flex-1 relative">
-          <ReactFlowProvider>
             <ReactFlow 
               nodes={nodes} 
               edges={edges} 
@@ -540,14 +655,27 @@ export default function Home() {
               nodeTypes={nodeTypes} 
               edgeTypes={edgeTypes}
               fitView
+              onlyRenderVisibleElements
               minZoom={0.1}
               maxZoom={1.5}
               nodesConnectable={false}
+              connectionMode={ConnectionMode.Loose}
+              edgesReconnectable={false}
               connectOnClick={false}
               proOptions={{ hideAttribution: true }}
               className="dark:bg-gray-950"
             >
               <Controls className="dark:bg-gray-800 dark:text-gray-200 dark:border-gray-700" />
+              <GraphMenu
+                showAllow={showAllow}
+                setShowAllow={setShowAllow}
+                showDeny={showDeny}
+                setShowDeny={setShowDeny}
+                chipLines={chipLines}
+                setChipLines={setChipLines}
+                onResetLayout={resetGraphLayout}
+                onExportPng={() => setExportOpen(true)}
+              />
               <Background color="#ccc" gap={16} />
             </ReactFlow>
             
@@ -559,10 +687,14 @@ export default function Home() {
               onAddChild={handleAddChild}
               topologyData={topologyData}
             />
-          </ReactFlowProvider>
         </div>
       </div>
       
+      <ExportPngDialog
+        open={exportOpen}
+        chartName={charts.find(chart => chart.id === activeChartId)?.name || 'graph'}
+        onClose={() => setExportOpen(false)}
+      />
       {isDataViewOpen && (
         <DataTablePopup 
           topologyData={topologyData} 

@@ -15,21 +15,23 @@ async function main() {
   await prisma.network.deleteMany()
   await prisma.zone.deleteMany()
 
+  const chart = await prisma.chart.create({ data: { name: 'Chart 1' } })
+
   // --- ZONES ---
   const internalZone = await prisma.zone.create({
-    data: { name: 'INTERNAL', color: '#DBEAFE', borderColor: '#3B82F6', description: 'Internal Corporate Networks' }
+    data: { chartId: chart.id, name: 'INTERNAL', color: '#DBEAFE', borderColor: '#3B82F6', description: 'Internal Corporate Networks' }
   })
 
   const untrustedZone = await prisma.zone.create({
-    data: { name: 'Untrusted', color: '#F3F4F6', borderColor: '#9CA3AF', description: 'Guest and Untrusted Networks' }
+    data: { chartId: chart.id, name: 'Untrusted', color: '#F3F4F6', borderColor: '#9CA3AF', description: 'Guest and Untrusted Networks' }
   })
 
   const vpnZone = await prisma.zone.create({
-    data: { name: 'VPN', color: '#D1FAE5', borderColor: '#10B981', description: 'Remote Access VPNs' }
+    data: { chartId: chart.id, name: 'VPN', color: '#D1FAE5', borderColor: '#10B981', description: 'Remote Access VPNs' }
   })
 
   const externalZone = await prisma.zone.create({
-    data: { name: 'EXTERNAL', color: '#FFEDD5', borderColor: '#F97316', description: 'Internet and External Providers' }
+    data: { chartId: chart.id, name: 'EXTERNAL', color: '#FFEDD5', borderColor: '#F97316', description: 'Internet and External Providers' }
   })
 
   // --- NETWORKS (Converted to Class B: 172.16.x.x) ---
@@ -105,6 +107,7 @@ async function main() {
   // --- RULES (Logik bleibt identisch) ---
   await prisma.rule.create({
     data: {
+      chartId: chart.id,
       description: 'Management to Smarthome',
       ports: '443, 80',
       action: 'ALLOW',
@@ -117,6 +120,7 @@ async function main() {
 
   await prisma.rule.create({
     data: {
+      chartId: chart.id,
       description: 'Block Untrusted to Internal',
       ports: 'any',
       action: 'BLOCK',
@@ -129,6 +133,7 @@ async function main() {
 
   await prisma.rule.create({
     data: {
+      chartId: chart.id,
       description: 'Proxmox to Internet',
       ports: '443, 80, 53',
       action: 'ALLOW',
@@ -141,6 +146,7 @@ async function main() {
 
   await prisma.rule.create({
     data: {
+      chartId: chart.id,
       description: 'Default Block Inbound',
       ports: 'any',
       action: 'BLOCK',
@@ -153,6 +159,7 @@ async function main() {
 
   await prisma.rule.create({
     data: {
+      chartId: chart.id,
       description: 'Video isolation',
       ports: 'any',
       action: 'BLOCK',

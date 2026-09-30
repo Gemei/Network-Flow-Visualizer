@@ -9,39 +9,39 @@
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"/>
 </div>
 
-A modern, interactive web application to visualize and manage complex firewall rules and network topologies. Built with Next.js, React Flow, and Prisma.
+An interactive web app for reading a firewall rulebase and seeing which zones can talk to each other. Built with Next.js, React Flow, Prisma, and SQLite.
 
 ---
 
-## 🚀 Overview (v1.0)
+## Overview
 
-Network Flow Visualizer helps administrators and engineers visually construct their network infrastructure and immediately test and simulate firewall rules between them. Rather than parsing through thousands of text-based rules, you can visualize ALLOW and BLOCK routes directly on an interactive graph.
+Import a Palo Alto security-rulebase CSV and the app draws one box per zone. Allow traffic is a solid green line. Deny, drop, and reset traffic is a dashed red line. Each chart keeps its own zones, rules, and layout.
 
 ![Main UI](./public/screenshots/main_ui.png)
 
-## Core Features
+## Using the graph
 
-### 🏢 Visual Topology Management
-Manage your network structure hierarchically. You can graphically define **Zones**, which map to your larger network segments (e.g., DMZ, Internal, Guest). Inside Zones, you can place **Networks** (with specific CIDRs), and within those put individual **Clients** (with IPs). The graph automatically organizes them cleanly.
+**Import.** In the sidebar, choose **Import Palo Alto CSV**. The import replaces the zones and rules on the chart you have open. A new chart starts empty, so import again for that chart. Disabled rules (names that start with `[Disabled]`) are stored but not drawn.
 
-### 🛡️ Interactive Rule Simulation
-Define Rules with multiple Sources, Destinations, Ports, and Priority. These are displayed as interactive edges (lines) on the graph. Green indicates ALLOW rules and red indicates BLOCK rules. If a rule specifies "any" destination or "any" source, it is drawn gracefully to show its broad impact without overwhelming the diagram.
+**Zones.** Checked networks and hosts appear as chips inside a Networks or Hosts section of their zone. Unchecked addresses stay off the canvas. A zone and its sections can be resized; chips keep their size and wrap to fit. They cannot be dragged outside the zone.
 
-### 🔄 Auto-Flow (Open Paths) Analysis
-Toggle the "Auto-Flow" feature to instantly calculate and visualize **all currently valid network paths**. Auto-Flow evaluates your priority-ordered firewall rules. It handles complex scenarios, such as "Deny ANY ANY" rules seamlessly, preventing green lines from drawing over definitively blocked paths.
+**Lines.** By default a line runs from zone to zone and ends in an arrow. The two directions use a light and a dark shade so they stay distinct. Turn on **Per chip lines** to draw a rule to the checked network or host instead, and to hide the arrows. Drag a line to curve it. Select a line first to move the side of the zone it attaches to.
 
-![Auto Flow](./public/screenshots/auto_flow.png)
+**Properties.** Select a line to see the combined sources, destinations, ports, applications, services, and actions for that direction, and to edit or delete the line.
 
-### ⚠️ Rule Conflict Detection
-Automatically identify shadowed or conflicting rules. Rules that are completely superseded by higher-priority rules turn grey, while partially conflicting rules display a warning icon `!`. Hover over the icon to see a tooltip detailing the specific rule causing the conflict.
+**Layout.** Positions, sizes, curves, and attachment sides are saved on the chart and survive a refresh. **Reset graph** clears that layout and puts the zones back on the default arrangement. Rules and checked addresses stay as they are.
 
-### 👥 Client Isolation & Properties Customization
-Double-click on nodes or rules to bring up the **Properties Panel**. From here you can customize names, descriptions, and structural properties. Networks also support toggling **Client Isolation** (which automatically restricts communication between clients within the same network). 
+**Export PNG.** Export captures the whole graph, including curves and labels outside the zone boxes. Resolution is a percentage and starts at 100%. The border starts at 5 pixels and can be any color. The preview updates as you change those settings.
 
-![Properties Panel](./public/screenshots/properties_panel.png)
+The canvas menu holds **Export PNG**, **Allow**, **Deny**, **Per chip lines**, and **Reset graph**.
 
-### 📊 Multiple View Contexts (Charts)
-Working on a very large environment? Use the **Chart Tabs** at the top of the screen to create multiple separate workspaces. A state of hidden/shown nodes, toggle preferences, and manual node coordinates is seamlessly saved for each chart to help you focus on specific problems.
+### Charts
+
+The tabs at the top are separate maps. Switching charts reloads that chart's zones, rules, and layout. Deleting a chart deletes its rules with it.
+
+### Other tools
+
+The sidebar can match a pasted list of IP addresses and subnets and check the related networks and hosts. **Show Open Paths Auto-Flow** draws guessed open paths on smaller maps. The properties panel and the data view still edit zones, networks, clients, and rules directly.
 
 ---
 
@@ -55,41 +55,32 @@ Database: SQLite for Prisma.
 
 #### Local Installation
 
-Clone the repository:
+Clone the repository and install dependencies:
+
 ```bash
-git clone [https://github.com/yourusername/network-flow-visualizer.git](https://github.com/yourusername/network-flow-visualizer.git)
+git clone https://github.com/Gemei/network-flow-visualizer.git
 cd network-flow-visualizer
-```
-
-
-Install dependencies:
-```bash
 npm install
 ```
 
+Create a `.env` file in the project root. The SQLite file is resolved from the `prisma` folder:
 
-Configure Environment:
-Create a .env file in the root directory:
 ```bash
-DATABASE_URL="postgresql://[USERNAME]:[PASSWORD]@localhost:5432/firewallview"
+DATABASE_URL="file:./dev.db"
 ```
 
+`.env` and `*.db` are listed in `.gitignore`.
 
-Initialize Database:
+Initialize the database and start the app:
+
 ```bash
 npx prisma generate
 npx prisma db push
 npx prisma db seed
-  ```
-
-
-Run Development Server:
-```bash
 npm run dev
 ```
 
-
-Open http://localhost:3000 in your browser.
+Open http://localhost:3000. `prisma db seed` loads sample zones. To see a firewall map, create or select a chart and import a Palo Alto security-rulebase CSV from the sidebar.
 
 #### 🐳 Docker Usage
 

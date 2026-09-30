@@ -1,4 +1,4 @@
-import { Handle, Position, NodeResizer } from '@xyflow/react'
+import { Handle, Position } from '@xyflow/react'
 import { Server } from 'lucide-react'
 import { useTheme } from 'next-themes'
 
@@ -13,7 +13,7 @@ function getContrastColors(hex: string) {
     : { text: 'text-white', subtext: 'text-gray-300', icon: 'text-gray-300' }
 }
 
-export function ClientNode({ data, selected }: { data: any; selected?: boolean }) {
+export function ClientNode({ data }: { data: any; selected?: boolean }) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme === 'dark'
   
@@ -23,18 +23,10 @@ export function ClientNode({ data, selected }: { data: any; selected?: boolean }
   
   return (
     <div 
-      className="flex items-center gap-2 px-3 py-1 shadow-sm rounded-full border border-gray-300 dark:border-gray-600 min-w-[120px] w-full h-full relative"
+      className="flex items-center gap-2 px-3 py-1 shadow-sm rounded-full border border-gray-300 dark:border-gray-600 w-full h-full overflow-hidden relative"
       style={{ backgroundColor: bgColor }}
       title={data.description || 'Client'}
     >
-      <NodeResizer 
-        minWidth={120} 
-        minHeight={34}
-        isVisible={selected}
-        lineClassName="!border-blue-400"
-        handleClassName="!w-3 !h-3 !bg-blue-500 !border-blue-600 !rounded-full"
-      />
-      
       <Server size={14} className={`${colors.icon} flex-shrink-0 relative z-10`} />
       <div className="flex flex-col overflow-hidden relative z-10 w-full">
         <span className={`font-medium text-xs ${colors.text} truncate`}>{data.label}</span>
@@ -44,8 +36,12 @@ export function ClientNode({ data, selected }: { data: any; selected?: boolean }
       {/* Left/Right handles only, fully invisible and non-interactive */}
       <Handle id="left" type="source" position={Position.Left} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
       <Handle id="right" type="source" position={Position.Right} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
+      <Handle id="top" type="source" position={Position.Top} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
+      <Handle id="bottom" type="source" position={Position.Bottom} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
       <Handle id="left-target" type="target" position={Position.Left} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
       <Handle id="right-target" type="target" position={Position.Right} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
+      <Handle id="top-target" type="target" position={Position.Top} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
+      <Handle id="bottom-target" type="target" position={Position.Bottom} style={{ opacity: 0, width: 1, height: 1, pointerEvents: 'none' }} />
     </div>
   )
 }

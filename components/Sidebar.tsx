@@ -1,6 +1,41 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Eye, EyeOff, AlertCircle } from 'lucide-react'
 import { ThemeToggle } from './ThemeToggle'
+
+function ipv4ToInt(ip: string): number | null {
+  const match = ip.trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (!match) return null
+  const parts = match.slice(1).map(Number)
+  if (parts.some(part => part > 255)) return null
+  return (((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0)
+}
+
+function parseBlock(token: string): { base: number; bits: number } | null {
+  const [addr, bitsRaw] = token.trim().split('/')
+  const base = ipv4ToInt(addr)
+  if (base === null) return null
+  const bits = bitsRaw === undefined ? 32 : Number(bitsRaw)
+  if (!Number.isInteger(bits) || bits < 0 || bits > 32) return null
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0
+  return { base: (base & mask) >>> 0, bits }
+}
+
+function blocksOverlap(a: { base: number; bits: number }, b: { base: number; bits: number }): boolean {
+  const bits = Math.min(a.bits, b.bits)
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0
+  return (a.base & mask) === (b.base & mask)
+}
+
+function tokenHits(token: string, name: string, cidr: string | null | undefined): boolean {
+  const needle = token.trim().toLowerCase()
+  if (!needle) return false
+  if (name.trim().toLowerCase() === needle) return true
+  if (cidr && cidr.trim().toLowerCase() === needle) return true
+  const wanted = parseBlock(token)
+  const have = cidr ? parseBlock(cidr) : parseBlock(name)
+  if (wanted && have) return blocksOverlap(wanted, have)
+  return false
+}
 
 export function Sidebar({
   topologyData,
@@ -14,7 +49,16 @@ export function Sidebar({
   onSelectItem,
   hiddenRules = {},
   setHiddenRules,
-  ruleConflicts = {}
+  ruleConflicts = {},
+  onImported,
+  showAllow = true,
+  setShowAllow,
+  showDeny = true,
+  setShowDeny,
+  chipLines = false,
+  setChipLines,
+  onResetLayout,
+  chartId,
 }: any) {
   const toggleRuleVisibility = (ruleId: string, e: any) => {
     e.stopPropagation()
@@ -39,6 +83,87 @@ export function Sidebar({
   }
 
   const [searchQuery, setSearchQuery] = useState('')
+  const [openZones, setOpenZones] = useState<Record<string, boolean>>({})
+  const [addressList, setAddressList] = useState('')
+  const [selectNote, setSelectNote] = useState('')
+
+  const applyAddressList = (only: boolean) => {
+    const tokens = addressList.split(/[\s,;]+/).map(token => token.trim()).filter(Boolean)
+    if (tokens.length === 0) {
+      setSelectNote('Enter one IP or subnet per line.')
+      return
+    }
+    const next: Record<string, boolean> = { ...hiddenNodes }
+    if (only) {
+      for (const zone of topologyData?.zones || []) {
+        for (const net of zone.networks || []) {
+          next[net.id] = true
+          for (const client of net.clients || []) next[client.id] = true
+        }
+      }
+    }
+    const opened: Record<string, boolean> = {}
+    let matched = 0
+    for (const zone of topologyData?.zones || []) {
+      for (const net of zone.networks || []) {
+        if (net.name === 'Hosts') {
+          for (const client of net.clients || []) {
+            if (!tokens.some(token => tokenHits(token, client.ip || client.name, client.ip))) continue
+            next[client.id] = false
+            next[net.id] = false
+            next[zone.id] = false
+            next[`section-hosts-${zone.id}`] = false
+            opened[zone.id] = true
+            matched++
+          }
+        } else if (tokens.some(token => tokenHits(token, net.name, net.cidr))) {
+          next[net.id] = false
+          next[zone.id] = false
+          next[`section-networks-${zone.id}`] = false
+          opened[zone.id] = true
+          matched++
+          for (const hostNet of zone.networks || []) {
+            if (hostNet.name !== 'Hosts') continue
+            for (const client of hostNet.clients || []) {
+              const inside = tokenHits(net.cidr || net.name, client.ip || '', client.ip)
+              const direct = tokens.some(token => tokenHits(token, client.ip || client.name, client.ip))
+              if (!direct && !inside) continue
+              next[client.id] = false
+              next[hostNet.id] = false
+              next[`section-hosts-${zone.id}`] = false
+              matched++
+            }
+          }
+        }
+      }
+    }
+    setHiddenNodes(next)
+    setOpenZones(prev => ({ ...prev, ...opened }))
+    setSelectNote(matched ? `${only ? 'Showing' : 'Checked'} ${matched} matching item${matched === 1 ? '' : 's'}.` : 'No hosts or networks matched that list.')
+  }
+  const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const importRulebase = async (file: File) => {
+    setImporting(true)
+    setImportError('')
+    try {
+      const body = new FormData()
+      body.append('file', file)
+      body.append('replace', 'true')
+      if (chartId) body.append('chartId', chartId)
+      const res = await fetch('/api/import/paloalto', { method: 'POST', body })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Import failed')
+      if (onImported) await onImported()
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'Import failed')
+    } finally {
+      setImporting(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
 
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
@@ -107,7 +232,26 @@ export function Sidebar({
         <ThemeToggle />
       </div>
 
-      <div className="p-4 border-b border-gray-200 dark:border-gray-800">
+      <div className="p-4 border-b border-gray-200 dark:border-gray-800 space-y-2">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) importRulebase(file)
+          }}
+        />
+        <button
+          type="button"
+          disabled={importing}
+          onClick={() => fileRef.current?.click()}
+          className="w-full text-sm font-medium px-3 py-2 rounded-md bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900 disabled:opacity-60"
+        >
+          {importing ? 'Importing rulebase…' : 'Import Palo Alto CSV'}
+        </button>
+        {importError && <p className="text-xs text-red-600 dark:text-red-400">{importError}</p>}
         <label className="flex items-center gap-2 cursor-pointer bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md hover:bg-blue-100 dark:hover:bg-blue-900/40 transition">
           <input 
             type="checkbox" 
@@ -122,6 +266,50 @@ export function Sidebar({
       <div className="flex-1 p-4">
         <h3 className="font-semibold text-gray-700 dark:text-gray-300 mb-3 text-sm tracking-wider uppercase">Topology Filter</h3>
         
+        <textarea
+          value={addressList}
+          onChange={(e) => setAddressList(e.target.value)}
+          placeholder={'172.20.3.10\n172.30.0.0/24'}
+          rows={4}
+          className="w-full text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-800 p-2 border border-gray-300 dark:border-gray-700 rounded-md text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => applyAddressList(false)}
+            className="flex-1 text-sm font-medium px-2 py-2 rounded-md border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100"
+          >
+            Check matches
+          </button>
+          <button
+            type="button"
+            onClick={() => applyAddressList(true)}
+            className="flex-1 text-sm font-medium px-2 py-2 rounded-md bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+          >
+            Show only these
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const next: Record<string, boolean> = { ...hiddenNodes }
+            for (const zone of topologyData?.zones || []) {
+              for (const net of zone.networks || []) {
+                next[net.id] = true
+                next[`section-networks-${zone.id}`] = true
+                next[`section-hosts-${zone.id}`] = true
+                for (const client of net.clients || []) next[client.id] = true
+              }
+            }
+            setHiddenNodes(next)
+            setSelectNote('Cleared networks and hosts. Zones stay on the map.')
+          }}
+          className="w-full text-xs font-medium px-3 py-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+        >
+          Clear addresses
+        </button>
+        {selectNote && <p className="text-[11px] text-gray-500 dark:text-gray-400">{selectNote}</p>}
+
         <input 
           type="text" 
           placeholder="Search nodes, IPs..." 
@@ -146,48 +334,120 @@ export function Sidebar({
                 {zone.name}
               </span>
             </label>
-            
-            {!hiddenNodes[zone.id] && (
-              <div className="ml-6 mt-1 flex flex-col gap-1">
-                {zone.networks.map((net: any) => (
-                  <div key={net.id}>
-                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 dark:text-gray-300">
-                      <input 
-                        type="checkbox" 
-                        checked={!hiddenNodes[net.id]} 
-                        onChange={() => toggleVisibility(net.id)}
-                        className="w-3.5 h-3.5"
-                      />
-                      <span 
-                        className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline cursor-pointer transition-colors"
-                        onClick={(e) => { e.preventDefault(); onSelectItem?.({ id: net.id, type: 'NetworkNode', data: { label: net.name, cidr: net.cidr, color: net.color, description: net.description, clientIsolation: net.clientIsolation } }) }}
-                      >
-                        {net.name}
-                      </span>
-                    </label>
-                    
-                    {!hiddenNodes[net.id] && (
-                      <div className="ml-6 mt-1 flex flex-col gap-1">
-                        {net.clients.map((client: any) => (
-                          <label key={client.id} className="flex items-center gap-2 cursor-pointer text-xs text-gray-500 dark:text-gray-400">
-                            <input 
-                              type="checkbox" 
-                              checked={!hiddenNodes[client.id]} 
-                              onChange={() => toggleVisibility(client.id)}
-                              className="w-3 h-3"
+            {zone.networks?.length > 0 && (
+              <button
+                type="button"
+                className="ml-6 mt-0.5 text-[11px] text-gray-500 dark:text-gray-400 hover:text-blue-600"
+                onClick={() => setOpenZones(prev => ({ ...prev, [zone.id]: !prev[zone.id] }))}
+              >
+                {openZones[zone.id] || searchQuery ? 'Hide addresses' : `${zone.networks.reduce((sum: number, net: any) => sum + (net.name === 'Hosts' ? (net.clients?.length || 0) : 1), 0)} addresses`}
+              </button>
+            )}
+
+            {!hiddenNodes[zone.id] && (openZones[zone.id] || searchQuery) && (
+              <div className="ml-6 mt-1 flex flex-col gap-2">
+                {(() => {
+                  const networks = zone.networks.filter((net: any) => net.name !== 'Hosts')
+                  const hosts = zone.networks.flatMap((net: any) => net.name === 'Hosts' ? (net.clients || []) : [])
+                  return (
+                    <>
+                      {networks.length > 0 && (
+                        <div>
+                          <label className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+                            <input
+                              type="checkbox"
+                              checked={networks.some((net: any) => !hiddenNodes[net.id])}
+                              onChange={() => {
+                                const hide = !hiddenNodes[`section-networks-${zone.id}`]
+                                setHiddenNodes((prev: any) => {
+                                  const next = { ...prev, [`section-networks-${zone.id}`]: hide }
+                                  networks.forEach((net: any) => { next[net.id] = hide })
+                                  return next
+                                })
+                              }}
+                              className="w-3.5 h-3.5"
                             />
-                            <span 
-                              className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline cursor-pointer transition-colors"
-                              onClick={(e) => { e.preventDefault(); onSelectItem?.({ id: client.id, type: 'ClientNode', data: { label: client.name, ip: client.ip, color: client.color, description: client.description } }) }}
-                            >
-                              {client.name}
-                            </span>
+                            Networks
                           </label>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                          <div className="ml-4">
+                          {networks.map((net: any) => (
+                            <label key={net.id} className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 dark:text-gray-300 py-0.5">
+                              <input
+                                type="checkbox"
+                                checked={!hiddenNodes[net.id]}
+                                onChange={() => {
+                                  const hide = !hiddenNodes[net.id]
+                                  setHiddenNodes((prev: any) => ({
+                                    ...prev,
+                                    [net.id]: hide,
+                                    ...(hide ? {} : { [zone.id]: false, [`section-networks-${zone.id}`]: false }),
+                                  }))
+                                }}
+                                className="w-3.5 h-3.5"
+                              />
+                              <span
+                                className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                                onClick={(e) => { e.preventDefault(); onSelectItem?.({ id: net.id, type: 'NetworkNode', data: { label: net.name, cidr: net.cidr, color: net.color, description: net.description, clientIsolation: net.clientIsolation } }) }}
+                              >
+                                {net.cidr ? `${net.name}` : net.name}
+                              </span>
+                            </label>
+                          ))}
+                          </div>
+                        </div>
+                      )}
+                      {hosts.length > 0 && (
+                        <div>
+                          <label className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+                            <input
+                              type="checkbox"
+                              checked={hosts.some((client: any) => !hiddenNodes[client.id])}
+                              onChange={() => {
+                                const hide = !hiddenNodes[`section-hosts-${zone.id}`]
+                                setHiddenNodes((prev: any) => {
+                                  const next = { ...prev, [`section-hosts-${zone.id}`]: hide }
+                                  hosts.forEach((client: any) => { next[client.id] = hide })
+                                  return next
+                                })
+                              }}
+                              className="w-3.5 h-3.5"
+                            />
+                            Hosts
+                          </label>
+                          <div className="ml-4">
+                          {hosts.map((client: any) => (
+                            <label key={client.id} className="flex items-center gap-2 cursor-pointer text-xs text-gray-600 dark:text-gray-300 py-0.5">
+                              <input
+                                type="checkbox"
+                                checked={!hiddenNodes[client.id]}
+                                onChange={() => {
+                                  const hide = !hiddenNodes[client.id]
+                                  setHiddenNodes((prev: any) => ({
+                                    ...prev,
+                                    [client.id]: hide,
+                                    ...(hide ? {} : {
+                                      [zone.id]: false,
+                                      [client.networkId]: false,
+                                      [`section-hosts-${zone.id}`]: false,
+                                    }),
+                                  }))
+                                }}
+                                className="w-3 h-3"
+                              />
+                              <span
+                                className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                                onClick={(e) => { e.preventDefault(); onSelectItem?.({ id: client.id, type: 'ClientNode', data: { label: client.name, ip: client.ip, color: client.color, description: client.description } }) }}
+                              >
+                                {client.ip || client.name}
+                              </span>
+                            </label>
+                          ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
             )}
           </div>

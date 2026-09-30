@@ -14,12 +14,16 @@ model Chart {
   id          String   @id @default(cuid())
   name        String   @default("Untitled")
   viewState   String?  // JSON string containing zonePositions, zoneSizes, hiddenNodes, showAutoFlow
+  zones       Zone[]
+  rules       Rule[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
 
 model Zone {
   id          String    @id @default(cuid())
+  chartId     String
+  chart       Chart     @relation(fields: [chartId], references: [id], onDelete: Cascade)
   name        String
   color       String?   // Background color as hex e.g. "#EFF6FF"
   borderColor String?   // Border color as hex e.g. "#3B82F6"
@@ -72,6 +76,8 @@ model Client {
 
 model Rule {
   id          String  @id @default(cuid())
+  chartId     String
+  chart       Chart   @relation(fields: [chartId], references: [id], onDelete: Cascade)
   description String? 
   ports       String? // e.g. "80, 443" or "any"
   action      String  @default("ALLOW") // "ALLOW" or "BLOCK"

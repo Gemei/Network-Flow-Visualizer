@@ -25,7 +25,7 @@ export function ChartTabs({
   onCreateChart,
   onDeleteChart,
   onRenameChart,
-  onOpenDataView
+  onOpenDataView,
 }: ChartTabsProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')

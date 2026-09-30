@@ -4,7 +4,7 @@ import { PrismaClient } from '@prisma/client'
 const prisma = new PrismaClient()
 
 const ALLOWED_RULE_FIELDS = [
-  'description', 'ports', 'action', 'priority', 'active',
+  'description', 'ports', 'action', 'priority', 'active', 'chartId',
 ]
 
 function sanitizeRuleData(data: any) {
