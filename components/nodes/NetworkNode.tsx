@@ -26,7 +26,7 @@ export function NetworkNode({ data, selected }: { data: any; selected?: boolean 
   const isDark = resolvedTheme === 'dark'
   
   const defaultBg = isDark ? '#3730A3' : '#C7D2FE'
-  const bgColor = data.color && data.color !== '#C7D2FE' ? data.color : defaultBg
+  const bgColor = data.color || defaultBg
   const colors = getContrastColors(bgColor)
   
   return (

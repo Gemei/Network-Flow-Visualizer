@@ -1,6 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { Eye, EyeOff, AlertCircle } from 'lucide-react'
 import { ThemeToggle } from './ThemeToggle'
+import { classifyTraffic } from '@/lib/paloalto-import'
 
 function ipv4ToInt(ip: string): number | null {
   const match = ip.trim().match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
@@ -24,6 +26,47 @@ function blocksOverlap(a: { base: number; bits: number }, b: { base: number; bit
   const bits = Math.min(a.bits, b.bits)
   const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0
   return (a.base & mask) === (b.base & mask)
+}
+
+function ConflictTip({ text, tone = 'red' }: { text: string; tone?: 'red' | 'amber' }) {
+  const anchor = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState<{ top?: number; bottom?: number; left: number; width: number } | null>(null)
+
+  const place = () => {
+    const node = anchor.current
+    if (!node) return
+    const rect = node.getBoundingClientRect()
+    const width = Math.min(280, window.innerWidth - 16)
+    let left = rect.left
+    if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8
+    if (left < 8) left = 8
+    const roomBelow = window.innerHeight - rect.bottom
+    if (roomBelow < 96 && rect.top > roomBelow) {
+      setBox({ bottom: window.innerHeight - rect.top + 6, left, width })
+    } else {
+      setBox({ top: rect.bottom + 6, left, width })
+    }
+  }
+
+  return (
+    <div
+      ref={anchor}
+      className="relative inline-flex"
+      onMouseEnter={place}
+      onMouseLeave={() => setBox(null)}
+    >
+      <AlertCircle className={`w-3.5 h-3.5 cursor-help ${tone === 'amber' ? 'text-amber-500' : 'text-red-500'}`} />
+      {box && createPortal(
+        <div
+          className="fixed bg-gray-800 text-white text-xs rounded px-2 py-1 font-normal shadow-lg whitespace-normal pointer-events-none"
+          style={{ top: box.top, bottom: box.bottom, left: box.left, width: box.width, zIndex: 10000 }}
+        >
+          {text}
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
 }
 
 function tokenHits(token: string, name: string, cidr: string | null | undefined): boolean {
@@ -492,12 +535,7 @@ export function Sidebar({
                      <span className={`font-medium text-gray-900 dark:text-gray-100 ${hiddenRules[r.id] ? 'opacity-50' : ''} flex items-center gap-1`}>
                        {r.description || r.action}
                        {isFullyShadowed && (
-                         <div className="relative group inline-flex" title={`Conflict: ${conflict.shadowingRuleNames.join(', ')}`}>
-                           <AlertCircle className="w-3.5 h-3.5 text-red-500 cursor-help" />
-                           <div className="absolute top-full left-0 mt-1 hidden group-hover:block w-max bg-gray-800 text-white text-xs rounded px-2 py-1 z-50 whitespace-normal max-w-xs font-normal shadow-lg">
-                             Conflict: {conflict.shadowingRuleNames.join(', ')}
-                           </div>
-                         </div>
+                         <ConflictTip text={`Shadowed by ${conflict.shadowingRuleNames.join(', ')}`} />
                        )}
                      </span>
                    </div>
@@ -506,17 +544,25 @@ export function Sidebar({
                     <div className="w-7 h-4 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
                   </label>
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-1">
-                  Ports: {r.ports} 
-                  {isPartiallyShadowed && (
-                    <div className="relative group inline-flex">
-                      <AlertCircle className="w-3 h-3 text-amber-500 cursor-help" />
-                      <div className="absolute top-full left-0 mt-1 hidden group-hover:block w-max bg-gray-800 text-white text-xs rounded px-2 py-1 z-50 whitespace-normal max-w-xs font-normal shadow-lg">
-                        Conflict: {conflict.shadowingRuleNames.join(', ')} covers {conflict.shadowedPorts.join(', ')}
-                      </div>
-                    </div>
-                  )}
-                  | Pri: {r.priority}
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 flex flex-col gap-0.5">
+                  {(() => {
+                    const traffic = classifyTraffic(r.ports || '')
+                    const line = (label: string, items: string[]) => (
+                      <span key={label}>{label}: {items.length ? items.join(', ') : 'any'}</span>
+                    )
+                    return (
+                      <>
+                        <span className="flex items-center gap-1">
+                          {line('Services', [...traffic.ports, ...traffic.services])}
+                          {isPartiallyShadowed && (
+                            <ConflictTip tone="amber" text={`${conflict.shadowingRuleNames.join(', ')} covers ${conflict.shadowedPorts.join(', ')}`} />
+                          )}
+                          <span>| Pri: {r.priority}</span>
+                        </span>
+                        {line('Applications', traffic.applications)}
+                      </>
+                    )
+                  })()}
                 </div>
               </div>
             )})}

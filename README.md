@@ -31,7 +31,9 @@ Import a Palo Alto security-rulebase CSV and the app draws one box per zone. All
 
 **Export PNG.** Export captures the whole graph, including curves and labels outside the zone boxes. Resolution is a percentage and starts at 100%. The border starts at 5 pixels and can be any color. The preview updates as you change those settings.
 
-The canvas menu holds **Export PNG**, **Allow**, **Deny**, **Per chip lines**, and **Reset graph**.
+**Export draw.io.** Downloads a `.drawio` file of the current chart: zones, Networks and Hosts sections, chips, and the visible allow and deny lines. Lines use the same curves as the canvas. Each label shows the count, such as `4 allow`, and the rule names. Open it in diagrams.net or the draw.io desktop app.
+
+The canvas menu holds **Export PNG**, **Export draw.io**, **Allow**, **Deny**, **Per chip lines**, and **Reset graph**.
 
 ### Charts
 

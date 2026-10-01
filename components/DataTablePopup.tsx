@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X, Server, Network, Shield, LayoutGrid, AlertCircle } from 'lucide-react';
+import { classifyTraffic } from '@/lib/paloalto-import';
 
 interface DataTablePopupProps {
   topologyData: any;
@@ -121,12 +122,14 @@ export function DataTablePopup({ topologyData, onClose, ruleConflicts = {} }: Da
 
           {activeTab === 'rules' && (
             <Table
-              columns={['ID', 'Action', 'Priority', 'Description', 'Ports', 'Active', 'Status', 'Created At']}
+              columns={['ID', 'Action', 'Priority', 'Description', 'Services', 'Applications', 'Active', 'Status', 'Created At']}
               data={rules}
               renderRow={(r) => {
                 const conflict = ruleConflicts[r.id];
                 const isFullyShadowed = conflict?.isFullyShadowed;
                 const isPartiallyShadowed = conflict?.shadowedPorts?.length > 0 && !isFullyShadowed;
+                const traffic = classifyTraffic(r.ports || '');
+                const list = (items: string[]) => items.length ? items.join(', ') : 'any';
 
                 return [
                 <span className={`font-mono text-xs ${isFullyShadowed ? 'opacity-50' : ''}`}>{r.id}</span>,
@@ -140,16 +143,17 @@ export function DataTablePopup({ topologyData, onClose, ruleConflicts = {} }: Da
                 <span className={isFullyShadowed ? 'opacity-50' : ''}>{r.priority}</span>,
                 <span className={isFullyShadowed ? 'opacity-50' : ''}>{r.description || '-'}</span>,
                 <div className={`flex items-center gap-1 font-mono ${isFullyShadowed ? 'opacity-50' : ''}`}>
-                  {r.ports || '-'}
+                  {list([...traffic.ports, ...traffic.services])}
                   {isPartiallyShadowed && (
                     <div className="relative group inline-flex">
                       <AlertCircle className="w-3.5 h-3.5 text-amber-500 cursor-help" />
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block w-max bg-gray-800 text-white text-xs rounded px-2 py-1 z-10 whitespace-normal max-w-xs font-sans font-normal">
-                         Conflict: {conflict.shadowingRuleNames.join(', ')} covers {conflict.shadowedPorts.join(', ')}
+                         {conflict.shadowingRuleNames.join(', ')} covers {conflict.shadowedPorts.join(', ')}
                       </div>
                     </div>
                   )}
                 </div>,
+                <span className={isFullyShadowed ? 'opacity-50' : ''}>{list(traffic.applications)}</span>,
                 <span className={isFullyShadowed ? 'opacity-50' : ''}>{r.active ? 'Yes' : 'No'}</span>,
                 <div className="flex items-center gap-1">
                   {isFullyShadowed ? (
@@ -157,7 +161,7 @@ export function DataTablePopup({ topologyData, onClose, ruleConflicts = {} }: Da
                       <AlertCircle className="w-3.5 h-3.5" />
                       Shadowed
                       <div className="absolute bottom-full left-0 mb-1 hidden group-hover:block w-max bg-gray-800 text-white text-xs rounded px-2 py-1 z-10 whitespace-normal max-w-xs font-normal">
-                         Conflict: {conflict.shadowingRuleNames.join(', ')}
+                         Shadowed by {conflict.shadowingRuleNames.join(', ')}
                       </div>
                     </span>
                   ) : r.active ? (

@@ -1,4 +1,5 @@
 import { isNetworkInCidr } from './cidr-utils'
+import { classifyTraffic } from './paloalto-import'
 
 export type ConflictInfo = {
   isFullyShadowed: boolean;
@@ -119,6 +120,178 @@ function getFlatEntities(targets: any[], topologyData: any, isSource: boolean): 
   return result;
 }
 
+type MatchSet = { any: boolean; tokens: Set<string> }
+type Traffic = { services: MatchSet; applications: MatchSet }
+type Endpoint = { zones: MatchSet; addresses: MatchSet }
+
+export function ruleTitle(rule: { description?: string; name?: string }) {
+  const raw = String(rule.description || rule.name || 'Unnamed rule')
+  return raw.split(' — ')[0].trim() || 'Unnamed rule'
+}
+
+function matchSet(values: string[]): MatchSet {
+  const tokens = new Set(values.map(token => token.toLowerCase()).filter(token => token && token !== 'any'))
+  return { any: values.length === 0 || values.some(token => token.toLowerCase() === 'any'), tokens }
+}
+
+function trafficOf(raw: string | null | undefined): Traffic {
+  const text = String(raw || '').trim()
+  if (!text || text.toLowerCase() === 'any') {
+    return { services: { any: true, tokens: new Set() }, applications: { any: true, tokens: new Set() } }
+  }
+  const parts = classifyTraffic(text)
+  return {
+    services: matchSet([...parts.ports, ...parts.services]),
+    applications: matchSet(parts.applications),
+  }
+}
+
+function setCovers(higher: MatchSet, lower: MatchSet) {
+  if (higher.any) return true
+  if (lower.any || lower.tokens.size === 0) return false
+  for (const token of lower.tokens) {
+    if (!higher.tokens.has(token)) return false
+  }
+  return true
+}
+
+function setOverlaps(higher: MatchSet, lower: MatchSet) {
+  if (higher.any || lower.any) return true
+  for (const token of lower.tokens) {
+    if (higher.tokens.has(token)) return true
+  }
+  return false
+}
+
+function trafficCovers(higher: Traffic, lower: Traffic) {
+  return setCovers(higher.services, lower.services) && setCovers(higher.applications, lower.applications)
+}
+
+function asCidr(value: string) {
+  const token = value.trim()
+  if (token.includes('/')) return token
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(token)) return `${token}/32`
+  return ''
+}
+
+function addressContains(outer: string, inner: string) {
+  if (outer.toLowerCase() === inner.toLowerCase()) return true
+  const outerCidr = asCidr(outer)
+  const innerCidr = asCidr(inner)
+  if (!outerCidr || !innerCidr) return false
+  return isNetworkInCidr(innerCidr, outerCidr)
+}
+
+function addressesCover(higher: MatchSet, lower: MatchSet) {
+  if (higher.any) return true
+  if (lower.any || lower.tokens.size === 0) return false
+  for (const inner of lower.tokens) {
+    let covered = false
+    for (const outer of higher.tokens) {
+      if (addressContains(outer, inner)) covered = true
+    }
+    if (!covered) return false
+  }
+  return true
+}
+
+function addressesOverlap(higher: MatchSet, lower: MatchSet) {
+  if (higher.any || lower.any) return true
+  for (const inner of lower.tokens) {
+    for (const outer of higher.tokens) {
+      if (addressContains(outer, inner) || addressContains(inner, outer)) return true
+    }
+  }
+  return false
+}
+
+function endpointCovers(higher: Endpoint, lower: Endpoint) {
+  return setCovers(higher.zones, lower.zones) && addressesCover(higher.addresses, lower.addresses)
+}
+
+function endpointOverlaps(higher: Endpoint, lower: Endpoint) {
+  return setOverlaps(higher.zones, lower.zones) && addressesOverlap(higher.addresses, lower.addresses)
+}
+
+function endpointFromText(text: string): Endpoint | null {
+  const match = text.match(/^(.*) \[(.*)\]$/)
+  if (!match) return null
+  const zones = match[1].split(',').map(part => part.trim()).filter(Boolean)
+  const addresses = match[2].split(',').map(part => part.trim()).filter(part => part && !/^\+\d+$/.test(part))
+  const truncated = /\+\d+/.test(match[2])
+  return {
+    zones: matchSet(zones),
+    addresses: truncated ? { any: false, tokens: new Set([`unlisted ${match[2]}`]) } : matchSet(addresses),
+  }
+}
+
+function endpointOf(rule: any, side: 'sources' | 'destinations', topologyData: any): Endpoint {
+  const description = String(rule.description || '')
+  const body = description.includes(' — ') ? description.slice(description.indexOf(' — ') + 3) : ''
+  const halves = body.split(' → ')
+  const text = side === 'sources' ? halves[0] : halves[1]
+  const parsed = text ? endpointFromText(text.trim()) : null
+  if (parsed) return parsed
+
+  const targets = Array.isArray(rule[side]) ? rule[side] : []
+  if (!targets.length) return { zones: { any: true, tokens: new Set() }, addresses: { any: true, tokens: new Set() } }
+
+  const zones = new Set<string>()
+  const addresses = new Set<string>()
+  let addressAny = false
+  for (const target of targets) {
+    let found = false
+    for (const zone of topologyData?.zones || []) {
+      if (target.zoneId && target.zoneId === zone.id) {
+        zones.add(zone.name)
+        if (target.cidr) addresses.add(target.cidr)
+        else addressAny = true
+        found = true
+      }
+      for (const network of zone.networks || []) {
+        if (target.networkId && target.networkId === network.id) {
+          zones.add(zone.name)
+          if (network.cidr) addresses.add(network.cidr)
+          else addresses.add(`network:${network.id}`)
+          found = true
+        }
+        for (const client of network.clients || []) {
+          if (target.clientId && target.clientId === client.id) {
+            zones.add(zone.name)
+            addresses.add(client.ip || `client:${client.id}`)
+            found = true
+          }
+        }
+      }
+    }
+    if (!found) {
+      const id = target.clientId || target.networkId || target.zoneId || target.cidr
+      if (id) addresses.add(String(id))
+    }
+  }
+
+  return {
+    zones: zones.size ? { any: false, tokens: new Set([...zones].map(zone => zone.toLowerCase())) } : { any: false, tokens: new Set(['unmatched zone']) },
+    addresses: addressAny ? { any: true, tokens: new Set() } : { any: false, tokens: new Set([...addresses].map(address => address.toLowerCase())) },
+  }
+}
+
+function shadowedTraffic(higher: Traffic, lower: Traffic): string[] {
+  if (!setOverlaps(higher.services, lower.services) || !setOverlaps(higher.applications, lower.applications)) return []
+  if (trafficCovers(higher, lower)) {
+    const services = lower.services.any ? ['any'] : [...lower.services.tokens]
+    const applications = lower.applications.any ? [] : [...lower.applications.tokens]
+    return [...services, ...applications]
+  }
+  const services = higher.services.any
+    ? (lower.services.any ? ['any'] : [...lower.services.tokens])
+    : [...lower.services.tokens].filter(token => higher.services.tokens.has(token))
+  const applications = higher.applications.any
+    ? []
+    : [...lower.applications.tokens].filter(token => higher.applications.tokens.has(token))
+  return [...services, ...applications]
+}
+
 export function detectRuleConflicts(rules: any[], topologyData: any): Record<string, ConflictInfo> {
   const conflicts: Record<string, ConflictInfo> = {};
 
@@ -126,14 +299,14 @@ export function detectRuleConflicts(rules: any[], topologyData: any): Record<str
   const activeRules = rules.filter(r => r.active).sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
 
   // Pre-calculate flat sets for performance
-  const flatSrc: Record<string, Set<string>> = {};
-  const flatDst: Record<string, Set<string>> = {};
-  const parsedPorts: Record<string, Set<number> | 'any'> = {};
+  const sources: Record<string, Endpoint> = {};
+  const destinations: Record<string, Endpoint> = {};
+  const parsedPorts: Record<string, Traffic> = {};
 
   activeRules.forEach(r => {
-    flatSrc[r.id] = getFlatEntities(r.sources, topologyData, true);
-    flatDst[r.id] = getFlatEntities(r.destinations, topologyData, false);
-    parsedPorts[r.id] = parsePorts(r.ports);
+    sources[r.id] = endpointOf(r, 'sources', topologyData);
+    destinations[r.id] = endpointOf(r, 'destinations', topologyData);
+    parsedPorts[r.id] = trafficOf(r.ports);
     
     // Initialize default conflict state
     conflicts[r.id] = {
@@ -153,30 +326,25 @@ export function detectRuleConflicts(rules: any[], topologyData: any): Record<str
 
     for (let j = 0; j < i; j++) {
       const higher = activeRules[j];
+      // A lower priority number is evaluated first. The same number does not shadow.
+      if ((higher.priority ?? 100) >= (rule.priority ?? 100)) continue;
 
-      const srcCovers = isEntitySubset(flatSrc[rule.id], flatSrc[higher.id]);
-      const dstCovers = isEntitySubset(flatDst[rule.id], flatDst[higher.id]);
+      const higherPorts = parsedPorts[higher.id];
+      const pathOverlaps = endpointOverlaps(sources[higher.id], sources[rule.id]) && endpointOverlaps(destinations[higher.id], destinations[rule.id]);
+      const pathCovers = endpointCovers(sources[higher.id], sources[rule.id]) && endpointCovers(destinations[higher.id], destinations[rule.id]);
+      const trafficOverlaps = setOverlaps(higherPorts.services, myPorts.services) && setOverlaps(higherPorts.applications, myPorts.applications);
 
-      // If the higher priority rule's paths cover our possible paths
-      if (srcCovers && dstCovers) {
-        const higherPorts = parsedPorts[higher.id];
-        const sp = getShadowedPorts(higherPorts, myPorts);
-        
-        if (sp.length > 0) {
-          shadowingRuleNames.add(higher.description || higher.name || 'Unnamed Rule');
-          sp.forEach(p => shadowedPorts.add(p));
-        }
+      // The earlier rule hides this one only when every packet this rule would match
+      // already matches the earlier rule's source and destination.
+      if (pathCovers && trafficOverlaps) {
+        shadowingRuleNames.add(`${ruleTitle(higher)} (priority ${higher.priority ?? 100})`);
+        shadowedTraffic(higherPorts, myPorts).forEach(item => shadowedPorts.add(item));
 
-        if (portCovers(higherPorts, myPorts)) {
+        if (trafficCovers(higherPorts, myPorts)) {
           fullyShadowed = true;
-          break; // Optimization: we are completely shadowed by this single rule
+          break;
         }
       }
-    }
-
-    // Check if the combination of partially shadowing rules fully covers this rule
-    if (!fullyShadowed && myPorts !== 'any' && shadowedPorts.size === myPorts.size && myPorts.size > 0) {
-      fullyShadowed = true;
     }
 
     conflicts[rule.id] = {

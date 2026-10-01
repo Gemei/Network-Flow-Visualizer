@@ -16,8 +16,8 @@ export function ZoneNode({ data, selected }: { data: any; selected?: boolean }) 
   const defaultBg = isDark ? '#1E293B' : '#F8FAFC'
   const defaultBorder = isDark ? '#334155' : '#94A3B8'
   
-  const bgColor = data.color && data.color !== '#F8FAFC' ? data.color : defaultBg
-  const borderColor = data.borderColor && data.borderColor !== '#94A3B8' ? data.borderColor : defaultBorder
+  const bgColor = data.color || defaultBg
+  const borderColor = data.borderColor || defaultBorder
   
   return (
     <div 

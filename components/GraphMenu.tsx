@@ -9,6 +9,7 @@ type Props = {
   setChipLines: (value: boolean) => void
   onResetLayout: () => void
   onExportPng: () => void
+  onExportDrawio: () => void
 }
 
 function devShadow(): ShadowRoot | null {
@@ -59,9 +60,10 @@ export function GraphMenu({
   setChipLines,
   onResetLayout,
   onExportPng,
+  onExportDrawio,
 }: Props) {
-  const state = useRef({ showAllow, showDeny, chipLines, setShowAllow, setShowDeny, setChipLines, onResetLayout, onExportPng })
-  state.current = { showAllow, showDeny, chipLines, setShowAllow, setShowDeny, setChipLines, onResetLayout, onExportPng }
+  const state = useRef({ showAllow, showDeny, chipLines, setShowAllow, setShowDeny, setChipLines, onResetLayout, onExportPng, onExportDrawio })
+  state.current = { showAllow, showDeny, chipLines, setShowAllow, setShowDeny, setChipLines, onResetLayout, onExportPng, onExportDrawio }
 
   useEffect(() => {
     let applying = false
@@ -102,6 +104,7 @@ export function GraphMenu({
         const current = state.current
         const rows: { id: string; label: string; mark?: 'allow' | 'deny'; on: boolean }[] = [
           { id: 'export', label: 'Export PNG', on: true },
+          { id: 'drawio', label: 'Export draw.io', on: true },
           { id: 'allow', label: 'Allow', mark: 'allow', on: current.showAllow },
           { id: 'deny', label: 'Deny', mark: 'deny', on: current.showDeny },
           { id: 'chips', label: 'Per chip lines', on: current.chipLines },
@@ -130,6 +133,7 @@ export function GraphMenu({
               const latest = state.current
               const id = button!.dataset.graphTool
               if (id === 'export') latest.onExportPng()
+              if (id === 'drawio') latest.onExportDrawio()
               if (id === 'allow') latest.setShowAllow(!latest.showAllow)
               if (id === 'deny') latest.setShowDeny(!latest.showDeny)
               if (id === 'chips') latest.setChipLines(!latest.chipLines)

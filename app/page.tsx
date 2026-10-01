@@ -13,6 +13,7 @@ import { PropertiesPanel } from '@/components/PropertiesPanel'
 import { ChartTabs, Chart } from '@/components/ChartTabs'
 import { DataTablePopup } from '@/components/DataTablePopup'
 import { ExportPngDialog } from '@/components/ExportPngDialog'
+import { downloadDrawio } from '@/lib/drawio-export'
 import { GraphMenu } from '@/components/GraphMenu'
 import { generateGraph, resizeFlowNode } from '@/lib/graph-logic'
 import { detectRuleConflicts } from '@/lib/rule-conflicts'
@@ -432,6 +433,12 @@ function Home() {
     }
   }, [onNodesChange, nodes, setEdges, activeChartId])
 
+  const previewAppearance = useCallback((id: string, patch: { color?: string; borderColor?: string }) => {
+    setNodes(current => current.map(node => (
+      node.id === id ? { ...node, data: { ...node.data, ...patch } } : node
+    )))
+  }, [setNodes])
+
   const handleSaveProperties = async (id: string, type: string, formData: any) => {
     let endpoint = ''
     if (type === 'ZoneNode') endpoint = `/api/zones/${id}`
@@ -456,7 +463,18 @@ function Home() {
     }
 
     if (endpoint) {
-      const saveData: any = { ...formData }
+      const fields: Record<string, string[]> = {
+        ZoneNode: ['name', 'description', 'color', 'borderColor'],
+        NetworkNode: ['name', 'description', 'cidr', 'color', 'clientIsolation'],
+        ClientNode: ['name', 'description', 'ip', 'color'],
+      }
+      const saveData: any = type === 'RuleEdge' ? { ...formData } : {}
+      if (type !== 'RuleEdge') {
+        if (formData.label !== undefined) saveData.name = formData.label
+        for (const key of fields[type] || []) {
+          if (key !== 'name' && formData[key] !== undefined) saveData[key] = formData[key]
+        }
+      }
       if (saveData.label !== undefined) {
         saveData.name = saveData.label
         delete saveData.label
@@ -590,8 +608,42 @@ function Home() {
   // Handle sidebar clicks: build a proper selectedItem for PropertiesPanel
   const handleSidebarSelect = useCallback((item: any) => {
     if (item.type === 'RuleEdge') {
-      // Rules already have full data from activeRules
-      setSelectedItem(item)
+      const description = String(item.data?.description || '')
+      const [title, body = ''] = description.split(' — ')
+      const arrow = body.indexOf(' → ')
+      const nameOf = (target: any) => {
+        const id = target?.clientId || target?.networkId || target?.zoneId
+        if (!id) return ''
+        for (const zone of topologyData?.zones || []) {
+          if (zone.id === id) return zone.name
+          for (const network of zone.networks || []) {
+            if (network.id === id) return network.name
+            for (const client of network.clients || []) {
+              if (client.id === id) return client.name
+            }
+          }
+        }
+        return ''
+      }
+      const ownRule = {
+        name: title || description || 'Rule',
+        sources: arrow >= 0 ? body.slice(0, arrow) : ((item.data?.sources || []).map(nameOf).filter(Boolean).join(', ') || 'any'),
+        destinations: arrow >= 0 ? body.slice(arrow + 3) : ((item.data?.destinations || []).map(nameOf).filter(Boolean).join(', ') || 'any'),
+        ports: item.data?.ports || 'any',
+        action: item.data?.action,
+        priority: item.data?.priority,
+      }
+      const line = edges.find(edge => {
+        const rules = (edge.data?.flowRules as { name?: string; priority?: number }[]) || []
+        return rules.some(rule => rule.name === ownRule.name && rule.priority === ownRule.priority)
+      })
+      const lineRules = (line?.data?.flowRules as unknown[]) || []
+      setSelectedItem({
+        ...item,
+        source: line?.source,
+        target: line?.target,
+        data: { ...item.data, flowRules: lineRules.length ? lineRules : [ownRule] },
+      })
     } else {
       // For topology items, find the matching node to get full data
       const node = nodes.find(n => n.id === item.id)
@@ -601,7 +653,7 @@ function Home() {
         setSelectedItem(item)
       }
     }
-  }, [nodes])
+  }, [nodes, edges, topologyData])
 
   if (!topologyData) {
     return <div className="min-h-screen flex items-center justify-center text-gray-500 dark:text-gray-400 dark:bg-gray-900">Loading Network Topology...</div>
@@ -675,6 +727,7 @@ function Home() {
                 setChipLines={setChipLines}
                 onResetLayout={resetGraphLayout}
                 onExportPng={() => setExportOpen(true)}
+                onExportDrawio={() => downloadDrawio(nodes, edges, charts.find(chart => chart.id === activeChartId)?.name || 'graph')}
               />
               <Background color="#ccc" gap={16} />
             </ReactFlow>
@@ -683,6 +736,7 @@ function Home() {
               selectedItem={selectedItem} 
               onClose={() => setSelectedItem(null)} 
               onSave={handleSaveProperties}
+              onPreview={previewAppearance}
               onDelete={handleDeleteProperties}
               onAddChild={handleAddChild}
               topologyData={topologyData}

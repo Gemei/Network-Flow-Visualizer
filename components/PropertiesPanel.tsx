@@ -50,6 +50,7 @@ export function PropertiesPanel({
   onSave,
   onDelete,
   onAddChild,
+  onPreview,
   topologyData
 }: any) {
   const [formData, setFormData] = useState<any>({})
@@ -85,7 +86,12 @@ export function PropertiesPanel({
 
   const handleChange = (e: any) => {
     const value = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
-    setFormData({ ...formData, [e.target.name]: value })
+    const next = { ...formData, [e.target.name]: value }
+    setFormData(next)
+    const appearance = e.target.name === 'color' || e.target.name === 'borderColor'
+    if (appearance && selectedItem.type !== 'RuleEdge' && /^#[0-9a-fA-F]{6}$/.test(String(value))) {
+      onPreview?.(selectedItem.id, { [e.target.name]: value })
+    }
   }
 
   const handleSave = () => {
@@ -305,11 +311,10 @@ export function PropertiesPanel({
             }
             return entityOptions.find(option => option.id === id)?.label || id
           }
-          const collected = { ports: new Set<string>(), services: new Set<string>(), applications: new Set<string>() }
+          const collected = { services: new Set<string>(), applications: new Set<string>() }
           for (const rule of rules) {
             const parts = classifyTraffic(rule.ports || '')
-            parts.ports.forEach(item => collected.ports.add(item))
-            parts.services.forEach(item => collected.services.add(item))
+            ;[...parts.ports, ...parts.services].forEach(item => collected.services.add(item))
             parts.applications.forEach(item => collected.applications.add(item))
           }
           const chips = (label: string, items: string[]) => (
@@ -322,11 +327,11 @@ export function PropertiesPanel({
               </div>
             </div>
           )
-          const from = labelFor(selectedItem.source)
-          const to = labelFor(selectedItem.target)
+          const from = selectedItem.source ? labelFor(selectedItem.source) : ''
+          const to = selectedItem.target ? labelFor(selectedItem.target) : ''
           return (
             <div className="rounded-md border border-gray-200 dark:border-gray-700 p-3 flex flex-col gap-3">
-              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{from} → {to}</p>
+              {from && to && <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{from} → {to}</p>}
               <div>
                 <label className={labelClass}>Sources</label>
                 <p className="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap">{unique(rules.map(rule => rule.sources || '')).join('\n') || 'any'}</p>
@@ -335,9 +340,8 @@ export function PropertiesPanel({
                 <label className={labelClass}>Destinations</label>
                 <p className="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap">{unique(rules.map(rule => rule.destinations || '')).join('\n') || 'any'}</p>
               </div>
-              {chips('Ports', [...collected.ports])}
-              {chips('Applications', [...collected.applications])}
               {chips('Services', [...collected.services])}
+              {chips('Applications', [...collected.applications])}
               {chips('Actions', unique(rules.map(rule => rule.action === 'BLOCK' ? 'DENY' : 'ALLOW')))}
             </div>
           )
@@ -463,11 +467,41 @@ export function PropertiesPanel({
               </div>
             </div>
 
-            {/* Ports */}
-            <div>
-              <label className={labelClass}>Ports</label>
-              <input type="text" name="ports" value={formData.ports || ''} onChange={handleChange} className={inputClass} placeholder="e.g. 80, 443" />
-            </div>
+            {(() => {
+              const traffic = classifyTraffic(String(formData.ports || ''))
+              const writeTraffic = (service: string, application: string) => {
+                const stored = String(formData.ports || '')
+                const ports = stored.trim().startsWith('{') || application
+                  ? JSON.stringify({ service, application })
+                  : service
+                setFormData({ ...formData, ports })
+              }
+              const serviceText = [...traffic.ports, ...traffic.services].join(', ')
+              return (
+                <>
+                  <div>
+                    <label className={labelClass}>Services</label>
+                    <input
+                      type="text"
+                      value={serviceText}
+                      onChange={(event) => writeTraffic(event.target.value, traffic.applications.join(', '))}
+                      className={inputClass}
+                      placeholder="e.g. 80, 443"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Applications</label>
+                    <input
+                      type="text"
+                      value={traffic.applications.join(', ')}
+                      onChange={(event) => writeTraffic(serviceText, event.target.value)}
+                      className={inputClass}
+                      placeholder="e.g. anydesk"
+                    />
+                  </div>
+                </>
+              )
+            })()}
 
             {/* Action */}
             <div>

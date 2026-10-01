@@ -18,7 +18,7 @@ export function ClientNode({ data }: { data: any; selected?: boolean }) {
   const isDark = resolvedTheme === 'dark'
   
   const defaultBg = isDark ? '#1F2937' : '#FFFFFF'
-  const bgColor = data.color && data.color !== '#FFFFFF' ? data.color : defaultBg
+  const bgColor = data.color || defaultBg
   const colors = getContrastColors(bgColor)
   
   return (
