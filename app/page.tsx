@@ -115,6 +115,7 @@ function Home() {
   const resetLayoutPending = useRef(false)
   // Store custom drag curves for edges
   const edgeControlsRef = useRef<Record<string, { x: number; y: number }>>({})
+  const sectionStylesRef = useRef<Record<string, { label?: string; description?: string; color?: string; borderColor?: string }>>({})
 
   const refreshTopology = async (chartId?: string) => {
     const id = chartId || activeChartId
@@ -185,6 +186,7 @@ function Home() {
       nodeSizesRef.current = {}
       edgeControlsRef.current = {}
       edgeHandlesRef.current = {}
+      sectionStylesRef.current = {}
       return
     }
     try {
@@ -199,6 +201,7 @@ function Home() {
       nodeSizesRef.current = state.nodeSizes || state.zoneSizes || {}
       edgeControlsRef.current = state.edgeControls || {}
       edgeHandlesRef.current = state.edgeHandles || {}
+      sectionStylesRef.current = state.sectionStyles || {}
     } catch (e) {
       console.error('Failed to parse chart state', e)
     }
@@ -217,6 +220,7 @@ function Home() {
       showAllow,
       showDeny,
       chipLines,
+      sectionStyles: sectionStylesRef.current,
     })
     
     fetch(`/api/charts/${activeChartId}`, {
@@ -291,6 +295,17 @@ function Home() {
       nodeSizesRef.current,
       chipLines
     )
+    initNodes.forEach(node => {
+      const style = sectionStylesRef.current[node.id]
+      if (!style) return
+      node.data = {
+        ...node.data,
+        label: style.label || node.data.label,
+        description: style.description ?? node.data.description,
+        color: style.color || node.data.color,
+        borderColor: style.borderColor || node.data.borderColor,
+      }
+    })
     // Save node positions (for zones) and sizes (for all) for next time
     initNodes.forEach(n => {
       if (n.type === 'ZoneNode') {
@@ -462,6 +477,55 @@ function Home() {
       endpoint = `/api/rules/${realRuleId}`
     }
 
+    const section = formData.entity === 'section' || String(id).startsWith('section-')
+    if (section) {
+      sectionStylesRef.current[id] = {
+        label: formData.label,
+        description: formData.description,
+        color: formData.color,
+        borderColor: formData.borderColor,
+      }
+      setNodes(current => current.map(node => node.id === id ? {
+        ...node,
+        data: { ...node.data, label: formData.label, description: formData.description, color: formData.color, borderColor: formData.borderColor },
+      } : node))
+      saveActiveChartState()
+      return true
+    }
+    const ruleEdits = Array.isArray(formData.ruleEdits) ? formData.ruleEdits.filter((rule: { id?: string }) => rule?.id) : []
+    if (type === 'RuleEdge' && ruleEdits.length > 0) {
+      for (const rule of ruleEdits) {
+        const body: any = {
+          description: rule.name,
+          ports: rule.ports,
+          action: rule.action,
+          priority: rule.priority,
+        }
+        if (ruleEdits.length === 1) {
+          body.sources = formData.sources
+          body.destinations = formData.destinations
+        }
+        const response = await fetch(`/api/rules/${rule.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (!response.ok) return false
+      }
+      await refreshTopology()
+      return true
+    }
+    const recordType = section
+      ? ''
+      : formData.entity === 'network' || type === 'NetworkNode'
+        ? 'NetworkNode'
+        : formData.entity === 'client' || type === 'ClientNode'
+          ? 'ClientNode'
+          : type
+    if (section) endpoint = ''
+    else if (recordType === 'NetworkNode') endpoint = `/api/networks/${id}`
+    else if (recordType === 'ClientNode') endpoint = `/api/clients/${id}`
+
     if (endpoint) {
       const fields: Record<string, string[]> = {
         ZoneNode: ['name', 'description', 'color', 'borderColor'],
@@ -471,7 +535,10 @@ function Home() {
       const saveData: any = type === 'RuleEdge' ? { ...formData } : {}
       if (type !== 'RuleEdge') {
         if (formData.label !== undefined) saveData.name = formData.label
-        for (const key of fields[type] || []) {
+        if (recordType === 'NetworkNode' && (formData.cidr === undefined || formData.cidr === '') && formData.ip) {
+          saveData.cidr = formData.ip
+        }
+        for (const key of fields[recordType] || []) {
           if (key !== 'name' && formData[key] !== undefined) saveData[key] = formData[key]
         }
       }
@@ -481,23 +548,30 @@ function Home() {
       }
       delete saveData.isAuto
 
-      await fetch(endpoint, {
+      const response = await fetch(endpoint, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(saveData)
       })
       await refreshTopology()
+      return response.ok
     }
+    return false
   }
 
   const handleDeleteProperties = async (id: string, type: string) => {
     let endpoint = ''
     if (type === 'ZoneNode') endpoint = `/api/zones/${id}`
-    else if (type === 'NetworkNode') endpoint = `/api/networks/${id}`
-    else if (type === 'ClientNode') endpoint = `/api/clients/${id}`
     else if (type === 'RuleEdge') {
       const realRuleId = id.split('-')[0]
       endpoint = `/api/rules/${realRuleId}`
+    } else if (String(id).startsWith('section-')) {
+      endpoint = ''
+    } else if (type === 'NetworkNode' || type === 'ClientNode') {
+      const node = nodes.find(item => item.id === id)
+      const entity = node?.data?.entity
+      if (entity === 'client') endpoint = `/api/clients/${id}`
+      else endpoint = `/api/networks/${id}`
     }
 
     if (endpoint) {
@@ -626,6 +700,7 @@ function Home() {
         return ''
       }
       const ownRule = {
+        id: item.id,
         name: title || description || 'Rule',
         sources: arrow >= 0 ? body.slice(0, arrow) : ((item.data?.sources || []).map(nameOf).filter(Boolean).join(', ') || 'any'),
         destinations: arrow >= 0 ? body.slice(arrow + 3) : ((item.data?.destinations || []).map(nameOf).filter(Boolean).join(', ') || 'any'),

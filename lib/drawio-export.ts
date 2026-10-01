@@ -94,10 +94,12 @@ function curvePoints(edge: Edge, byId: Map<string, Node>) {
 
 function nodeValue(node: Node) {
   const data = (node.data || {}) as Record<string, unknown>
-  const label = String(data.label || data.name || node.id)
+  const label = String(data.label || data.name || node.id).trim()
   if (node.type === 'ZoneNode') return escapeXml(label.toUpperCase())
-  const ip = typeof data.ip === 'string' && data.ip ? data.ip : ''
-  return escapeXml(ip ? `${label}\n${ip}` : label).replace(/\n/g, '&#10;')
+  const address = String(data.cidr || data.ip || '').trim()
+  const repeated = address && address.toLowerCase() === label.toLowerCase()
+  const text = address && !repeated ? `${label}\n${address}` : label
+  return escapeXml(text).replace(/\n/g, '&#10;')
 }
 
 function nodeStyle(node: Node) {

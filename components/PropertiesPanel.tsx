@@ -57,12 +57,20 @@ export function PropertiesPanel({
   // Use arrays of RuleTarget for multiple selections
   const [sources, setSources] = useState<RuleTarget[]>([])
   const [destinations, setDestinations] = useState<RuleTarget[]>([])
+  const [ruleDrafts, setRuleDrafts] = useState<any[]>([])
+  const [toast, setToast] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const entityOptions = useMemo(() => buildEntityOptions(topologyData), [topologyData])
+
+  const selectedId = selectedItem?.id
+  const selectedType = selectedItem?.type
 
   useEffect(() => {
     if (selectedItem) {
       setFormData({ ...selectedItem.data })
+      setRuleDrafts(Array.isArray(selectedItem.data?.flowRules) ? selectedItem.data.flowRules.map((rule: any) => ({ ...rule })) : [])
+      setConfirmDelete(false)
       if (selectedItem.type === 'RuleEdge' && !selectedItem.data?.isAuto) {
         // Map existing Prisma relations to local state on select
         const ruleData = selectedItem.data;
@@ -80,7 +88,7 @@ export function PropertiesPanel({
         setDestinations(dstList.length > 0 ? dstList : [{ id: 'any' }])
       }
     }
-  }, [selectedItem])
+  }, [selectedId, selectedType])
 
   if (!selectedItem) return null
 
@@ -94,7 +102,12 @@ export function PropertiesPanel({
     }
   }
 
-  const handleSave = () => {
+  const showToast = (message: string) => {
+    setToast(message)
+    window.setTimeout(() => setToast(current => current === message ? '' : current), 2500)
+  }
+
+  const handleSave = async () => {
     if (isRule) {
       const saveData: any = { ...formData }
       
@@ -120,13 +133,27 @@ export function PropertiesPanel({
         return null
       }).filter(Boolean)
 
-      onSave(selectedItem.id, selectedItem.type, saveData)
+      const edits = ruleDrafts.map((rule, index) => index === 0 && ruleDrafts.length === 1 ? {
+        ...rule,
+        name: formData.description || rule.name,
+        ports: formData.ports ?? rule.ports,
+        action: formData.action ?? rule.action,
+        priority: formData.priority ?? rule.priority,
+      } : rule)
+      const saved = await onSave(selectedItem.id, selectedItem.type, { ...saveData, ruleEdits: edits })
+      showToast(saved === false ? 'Could not save' : 'Saved')
     } else {
-      onSave(selectedItem.id, selectedItem.type, formData)
+      const saved = await onSave(selectedItem.id, selectedItem.type, formData)
+      showToast(saved === false ? 'Could not save' : 'Saved')
     }
   }
 
   const handleDelete = () => {
+    setConfirmDelete(true)
+  }
+
+  const confirmAndDelete = () => {
+    setConfirmDelete(false)
     onDelete(selectedItem.id, selectedItem.type)
   }
 
@@ -135,8 +162,9 @@ export function PropertiesPanel({
 
   // derive what fields to show based on type
   const isZone = selectedItem.type === 'ZoneNode'
-  const isNetwork = selectedItem.type === 'NetworkNode'
-  const isClient = selectedItem.type === 'ClientNode'
+  const isSection = selectedItem.data?.entity === 'section' || String(selectedItem.id || '').startsWith('section-')
+  const isNetwork = !isSection && (selectedItem.type === 'NetworkNode' || selectedItem.data?.entity === 'network')
+  const isClient = !isNetwork && !isSection && (selectedItem.type === 'ClientNode' || selectedItem.data?.entity === 'client')
   const isRule = selectedItem.type === 'RuleEdge'
 
   const selectClass = "w-full border border-gray-300 dark:border-gray-700 rounded-md p-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-sm"
@@ -144,7 +172,11 @@ export function PropertiesPanel({
   const labelClass = "block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
 
   return (
-    <div className="absolute right-0 top-0 h-full w-96 bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 z-50 p-4 shadow-xl flex flex-col transition-colors overflow-y-auto">
+    <div
+      className="absolute right-0 top-0 h-full w-96 bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 z-[80] p-4 shadow-xl flex flex-col transition-colors overflow-y-auto"
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">Properties</h2>
         <button onClick={onClose} className="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 text-2xl leading-none">&times;</button>
@@ -164,7 +196,7 @@ export function PropertiesPanel({
           </div>
         )}
 
-        <div>
+        {ruleDrafts.length <= 1 && <div>
           <label className={labelClass}>Description</label>
           <textarea 
             name="description" 
@@ -172,7 +204,7 @@ export function PropertiesPanel({
             onChange={handleChange} 
             className={`${inputClass} min-h-[80px]`}
           />
-        </div>
+        </div>}
 
         {isNetwork && (
           <div>
@@ -299,55 +331,75 @@ export function PropertiesPanel({
           </div>
         )}
 
-        {isRule && Array.isArray(selectedItem.data?.flowRules) && selectedItem.data.flowRules.length > 0 && (() => {
-          const rules = selectedItem.data.flowRules as { sources?: string; destinations?: string; ports?: string; action?: string }[]
-          const unique = (values: string[]) => [...new Set(values.map(value => value.trim()).filter(Boolean))]
-          const labelFor = (id: string) => {
-            if (id.startsWith('section-networks-') || id.startsWith('section-hosts-')) {
-              const zoneId = id.replace(/^section-(networks|hosts)-/, '')
-              const zone = topologyData?.zones?.find((item: { id: string; name: string }) => item.id === zoneId)
-              const kind = id.startsWith('section-networks-') ? 'networks' : 'hosts'
-              return zone ? `${zone.name} ${kind}` : kind
-            }
-            return entityOptions.find(option => option.id === id)?.label || id
-          }
-          const collected = { services: new Set<string>(), applications: new Set<string>() }
-          for (const rule of rules) {
-            const parts = classifyTraffic(rule.ports || '')
-            ;[...parts.ports, ...parts.services].forEach(item => collected.services.add(item))
-            parts.applications.forEach(item => collected.applications.add(item))
-          }
-          const chips = (label: string, items: string[]) => (
-            <div key={label}>
-              <label className={labelClass}>{label}</label>
-              <div className="flex flex-wrap gap-1">
-                {(items.length ? items : ['any']).map(item => (
-                  <span key={item} className="text-xs rounded border border-gray-200 dark:border-gray-700 px-2 py-1 text-gray-800 dark:text-gray-100">{item}</span>
-                ))}
+        {isSection && (
+          <>
+            <div>
+              <label className={labelClass}>Background Color</label>
+              <div className="flex items-center gap-2">
+                <input type="color" name="color" value={/^#[0-9a-fA-F]{6}$/.test(formData.color || '') ? formData.color : '#E2E8F0'} onChange={handleChange} className="w-10 h-10 rounded cursor-pointer border border-gray-300 dark:border-gray-600" />
+                <input type="text" name="color" value={formData.color || ''} onChange={handleChange} className={`${inputClass} flex-1`} placeholder="#E2E8F0" />
               </div>
             </div>
-          )
-          const from = selectedItem.source ? labelFor(selectedItem.source) : ''
-          const to = selectedItem.target ? labelFor(selectedItem.target) : ''
-          return (
-            <div className="rounded-md border border-gray-200 dark:border-gray-700 p-3 flex flex-col gap-3">
-              {from && to && <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{from} → {to}</p>}
-              <div>
-                <label className={labelClass}>Sources</label>
-                <p className="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap">{unique(rules.map(rule => rule.sources || '')).join('\n') || 'any'}</p>
+            <div>
+              <label className={labelClass}>Border Color</label>
+              <div className="flex items-center gap-2">
+                <input type="color" name="borderColor" value={/^#[0-9a-fA-F]{6}$/.test(formData.borderColor || '') ? formData.borderColor : '#9CA3AF'} onChange={handleChange} className="w-10 h-10 rounded cursor-pointer border border-gray-300 dark:border-gray-600" />
+                <input type="text" name="borderColor" value={formData.borderColor || ''} onChange={handleChange} className={`${inputClass} flex-1`} placeholder="#9CA3AF" />
               </div>
-              <div>
-                <label className={labelClass}>Destinations</label>
-                <p className="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap">{unique(rules.map(rule => rule.destinations || '')).join('\n') || 'any'}</p>
-              </div>
-              {chips('Services', [...collected.services])}
-              {chips('Applications', [...collected.applications])}
-              {chips('Actions', unique(rules.map(rule => rule.action === 'BLOCK' ? 'DENY' : 'ALLOW')))}
             </div>
-          )
-        })()}
+          </>
+        )}
 
-        {isRule && (
+        {isRule && ruleDrafts.length > 1 && (
+          <div className="flex flex-col gap-3">
+            {ruleDrafts.map((rule, index) => {
+              const traffic = classifyTraffic(String(rule.ports || ''))
+              const services = [...traffic.ports, ...traffic.services].join(', ')
+              const applications = traffic.applications.join(', ')
+              const write = (patch: Record<string, unknown>) => {
+                setRuleDrafts(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item))
+              }
+              const writeTraffic = (service: string, application: string) => {
+                const stored = String(rule.ports || '')
+                write({ ports: stored.trim().startsWith('{') || application ? JSON.stringify({ service, application }) : service })
+              }
+              return (
+                <div key={rule.id || index} className="rounded-md border border-gray-200 dark:border-gray-700 p-3 flex flex-col gap-2">
+                  <label className={labelClass}>Rule name</label>
+                  <input className={inputClass} value={rule.name || ''} onChange={(event) => write({ name: event.target.value })} />
+                  <label className={labelClass}>Services</label>
+                  <input className={inputClass} value={services} onChange={(event) => writeTraffic(event.target.value, applications)} />
+                  <label className={labelClass}>Applications</label>
+                  <input className={inputClass} value={applications} onChange={(event) => writeTraffic(services, event.target.value)} />
+                  <label className={labelClass}>Action</label>
+                  <select className={selectClass} value={rule.action || 'ALLOW'} onChange={(event) => write({ action: event.target.value })}>
+                    <option value="ALLOW">ALLOW</option>
+                    <option value="BLOCK">BLOCK</option>
+                  </select>
+                  <label className={labelClass}>Priority</label>
+                  <input type="number" className={inputClass} value={rule.priority ?? 100} onChange={(event) => write({ priority: event.target.value })} />
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {isRule && ruleDrafts.length <= 1 && (
+          <div>
+            <label className={labelClass}>Name</label>
+            <input
+              className={inputClass}
+              value={String(formData.description || '').split(' — ')[0]}
+              onChange={(event) => {
+                const rest = String(formData.description || '').split(' — ').slice(1).join(' — ')
+                const description = rest ? `${event.target.value} — ${rest}` : event.target.value
+                setFormData({ ...formData, description })
+              }}
+            />
+          </div>
+        )}
+
+        {isRule && ruleDrafts.length <= 1 && (
           <>
             {/* Sources */}
             <div>
@@ -521,15 +573,32 @@ export function PropertiesPanel({
         )}
 
         <div className="flex gap-2 mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
-          <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded-md p-2 font-medium transition">
+          <button onClick={handleSave} className="flex-1 bg-blue-600 text-white rounded-md p-2 font-medium transition duration-150 hover:bg-blue-800 hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:bg-blue-900">
             Save
           </button>
-          {!selectedItem.data?.isAuto && (
-            <button onClick={handleDelete} className="flex-1 bg-red-600 hover:bg-red-700 text-white rounded-md p-2 font-medium transition">
+          {!selectedItem.data?.isAuto && !isSection && (
+            <button onClick={handleDelete} className="flex-1 bg-red-600 text-white rounded-md p-2 font-medium transition duration-150 hover:bg-red-800 hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 active:bg-red-900">
               Delete
             </button>
           )}
         </div>
+        {toast && (
+          <div className="fixed bottom-6 right-6 z-[90] rounded-md bg-gray-900 px-4 py-2 text-sm text-white shadow-lg">
+            {toast}
+          </div>
+        )}
+        {confirmDelete && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40">
+            <div className="w-80 rounded-lg bg-white p-4 shadow-xl dark:bg-gray-900">
+              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Delete this item?</p>
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">This cannot be undone.</p>
+              <div className="mt-4 flex gap-2">
+                <button onClick={() => setConfirmDelete(false)} className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">Cancel</button>
+                <button onClick={confirmAndDelete} className="flex-1 rounded-md bg-red-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-800">Delete</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Add Child Buttons */}
         {isZone && (

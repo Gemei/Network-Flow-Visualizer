@@ -32,7 +32,7 @@ export function NetworkNode({ data, selected }: { data: any; selected?: boolean 
   return (
     <div 
       className="w-full h-full px-4 py-2 shadow-md rounded-md border border-gray-400 dark:border-gray-500 overflow-hidden relative"
-      style={{ backgroundColor: bgColor }}
+      style={{ backgroundColor: bgColor, borderColor: data.borderColor || undefined }}
       title={data.description || 'Network'}
     >
       <NodeResizer

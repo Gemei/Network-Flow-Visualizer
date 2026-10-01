@@ -106,7 +106,7 @@ export function generateGraph(data: TopologyData, hiddenNodes: Record<string, bo
       nodes.push({
         id: networksSectionId,
         type: 'NetworkNode',
-        data: { label: 'Networks', color: '#E2E8F0', description: 'Subnets and address objects' },
+        data: { label: 'Networks', color: '#E2E8F0', description: 'Subnets and address objects', entity: 'section' },
         position: { x: ZONE_PADDING_X / 2, y: sectionY },
         parentId: zone.id,
         extent: 'parent',
@@ -124,8 +124,10 @@ export function generateGraph(data: TopologyData, hiddenNodes: Record<string, bo
           data: {
             label: network.name,
             ip: network.cidr || '',
+            cidr: network.cidr || '',
             color: network.color,
             description: network.description,
+            entity: 'network',
           },
           position: {
             x: NETWORK_PADDING_X + col * (CLIENT_WIDTH + CLIENT_GAP),
@@ -146,7 +148,7 @@ export function generateGraph(data: TopologyData, hiddenNodes: Record<string, bo
       nodes.push({
         id: hostsSectionId,
         type: 'NetworkNode',
-        data: { label: 'Hosts', color: '#EDE9FE', description: 'Individual addresses' },
+        data: { label: 'Hosts', color: '#EDE9FE', description: 'Individual addresses', entity: 'section' },
         position: { x: ZONE_PADDING_X / 2, y: sectionY },
         parentId: zone.id,
         extent: 'parent',
@@ -161,7 +163,7 @@ export function generateGraph(data: TopologyData, hiddenNodes: Record<string, bo
         nodes.push({
           id: client.id,
           type: 'ClientNode',
-          data: { label: client.name, ip: client.ip, color: client.color, description: client.description },
+          data: { label: client.name, ip: client.ip, color: client.color, description: client.description, entity: 'client' },
           position: {
             x: NETWORK_PADDING_X + col * (CLIENT_WIDTH + CLIENT_GAP),
             y: 36 + row * (CLIENT_HEIGHT + CLIENT_GAP),
@@ -372,6 +374,7 @@ export function generateGraph(data: TopologyData, hiddenNodes: Record<string, bo
                   const [title, body = ''] = description.split(' — ')
                   const arrow = body.indexOf(' → ')
                   return {
+                    id: rule.id,
                     name: title || description || 'Rule',
                     sources: arrow >= 0 ? body.slice(0, arrow) : (sources.map((s: any) => getEntityName(s.clientId || s.networkId || s.zoneId)).join(', ') || 'any'),
                     destinations: arrow >= 0 ? body.slice(arrow + 3) : (destinations.map((d: any) => getEntityName(d.clientId || d.networkId || d.zoneId)).join(', ') || 'any'),
