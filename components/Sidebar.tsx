@@ -459,7 +459,7 @@ export function Sidebar({
                           </label>
                           <div className="ml-4">
                           {hosts.map((client: any) => (
-                            <label key={client.id} className="flex items-center gap-2 cursor-pointer text-xs text-gray-600 dark:text-gray-300 py-0.5">
+                            <label key={client.id} className="flex items-center gap-2 cursor-pointer text-sm text-gray-700 dark:text-gray-300 py-0.5">
                               <input
                                 type="checkbox"
                                 checked={!hiddenNodes[client.id]}
