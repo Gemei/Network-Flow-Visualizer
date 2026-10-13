@@ -343,8 +343,10 @@ function Home() {
     })
     
     const visibleEdges = edgesWithControls.filter(edge => {
-      if (edge.data?.isAuto) return true
-      if (edge.data?.action === 'BLOCK') return showDeny
+      // The object literal above hides spread keys from the inferred type.
+      const data = edge.data as { isAuto?: boolean; action?: string } | undefined
+      if (data?.isAuto) return true
+      if (data?.action === 'BLOCK') return showDeny
       return showAllow
     })
     setNodes(initNodes)
