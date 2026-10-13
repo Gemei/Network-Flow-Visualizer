@@ -39,7 +39,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Use the client generated during the build, not a second install.
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+
+# The CLI is a devDependency, so standalone output has no `prisma` binary.
+# Install it with its own dependency tree; the app keeps the generated client above.
+RUN npm install --prefix /opt/prisma-cli prisma@6.19.2 && chmod -R a+rX /opt/prisma-cli
 
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh

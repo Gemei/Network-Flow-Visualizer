@@ -2,7 +2,7 @@
 set -e
 
 echo "Applying database schema..."
-npx prisma db push --skip-generate
+node /opt/prisma-cli/node_modules/prisma/build/index.js db push --skip-generate
 echo "Database ready."
 
 exec "$@"
