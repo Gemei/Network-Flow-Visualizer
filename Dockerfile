@@ -56,6 +56,9 @@ RUN mkdir -p /home/nextjs && chown nextjs:nodejs /home/nextjs
 
 EXPOSE 3000
 ENV PORT 3000
+# Docker sets HOSTNAME to the container id. Next.js standalone binds to that
+# name only, so a check against 127.0.0.1 fails while the app is healthy.
+ENV HOSTNAME=0.0.0.0
 
 ENV DATABASE_URL="file:/app/data/dev.db"
 
