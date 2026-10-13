@@ -9,3 +9,6 @@ README.md
 *.db
 .env
 .env*
+.github
+docker-compose.yml
+docs
